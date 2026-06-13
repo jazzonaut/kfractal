@@ -1,0 +1,13 @@
+{
+  "name": "KFractal",
+  "short_name": "KFractal",
+  "description": "WebGPU fractal renderer with orbit-trap color and global lighting.",
+  "theme_color": "#08080f",
+  "background_color": "#08080f",
+  "display": "standalone",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ]
+}

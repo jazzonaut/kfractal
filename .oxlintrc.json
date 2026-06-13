@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "unicorn/filename-case": ["error", { "case": "kebabCase" }],
+    "no-underscore-dangle": ["warn", { "allow": ["__kf", "__kfSettle"] }]
+  },
+  "overrides": [
+    {
+      "files": ["*.vue"],
+      "rules": {
+        "unicorn/filename-case": ["error", { "case": "pascalCase" }]
+      }
+    }
+  ],
+  "ignorePatterns": ["dist", "node_modules"]
+}
