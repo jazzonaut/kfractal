@@ -31,12 +31,22 @@ describe("Stage orbit / dolly clamps", () => {
     expect(s.yaw).toBeCloseTo(1.0, 12);
   });
 
-  it("clamps dolly distance to [0.2, 200]", () => {
+  it("caps the dolly-out distance at MAX_ORBIT", () => {
     const s = new Stage();
-    s.dolly(1000);
-    expect(s.distance).toBeLessThanOrEqual(200);
-    s.dolly(-1000);
-    expect(s.distance).toBeGreaterThanOrEqual(0.2);
+    s.dolly(1e6);
+    expect(s.distance).toBeLessThanOrEqual(2000);
+  });
+
+  it("pushes the pivot forward instead of stalling once the orbit bottoms out", () => {
+    const s = new Stage();
+    // Scroll all the way in: distance bottoms out at MIN_ORBIT and the pivot is carried
+    // forward along the view axis, so the camera flies through into the interior.
+    const targetBefore = s.target.clone();
+    for (let i = 0; i < 200; i += 1) s.dolly(-0.1);
+    expect(s.distance).toBeCloseTo(0.05, 6); // pinned at MIN_ORBIT, never frozen short of it
+    // The pivot advanced forward (toward where the camera was looking), i.e. through any
+    // surface that sat in front of it.
+    expect(s.target.distanceTo(targetBefore)).toBeGreaterThan(0.1);
   });
 });
 

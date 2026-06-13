@@ -16,14 +16,21 @@ export class Stage {
   distance = 5;
   /** Rotation around the view axis (radians); 0 keeps the horizon level. */
   roll = 0;
+  /**
+   * The shape's natural framing distance, used as the fly-through pace once the camera
+   * pushes past a surface (see dolly). Tying the pace to the shape's own scale keeps a
+   * notch feeling the same whether you're crossing a small lattice cell or a large vault.
+   */
+  private flyReference = 5;
 
   constructor() {
-    // Far plane covers the full dolly range (max distance 200) with headroom.
+    // Near/far bracket the full dolly range (out to MAX_ORBIT) with headroom; the raymarch
+    // uses its own draw distance, so these planes only matter for any rasterized overlays.
     this.camera = new THREE.PerspectiveCamera(
       45,
       window.innerWidth / window.innerHeight,
-      0.05,
-      500,
+      0.02,
+      3000,
     );
     this.applyOrbit();
   }
@@ -34,6 +41,9 @@ export class Stage {
     this.pitch = camera.pitch;
     this.roll = camera.roll ?? 0;
     this.distance = camera.distance;
+    // Fly-through pace follows the shape's framing scale; floor it so a tightly-framed
+    // shape still moves at a usable rate when you punch through into its interior.
+    this.flyReference = Math.max(0.5, camera.distance);
     this.camera.fov = camera.fov;
     this.camera.updateProjectionMatrix();
     this.applyOrbit();
@@ -52,11 +62,29 @@ export class Stage {
   }
 
   dolly(delta: number): void {
-    // The lower bound is a fallback only: the DiveController re-bases the world scale
-    // before the camera ever gets this close, which is what makes deep zoom possible.
-    // The upper bound only needs to stop runaway scrolling; the march draw distance
-    // tracks the camera distance, so far pull-backs still render the whole fractal.
-    this.distance = Math.min(200, Math.max(0.2, this.distance * (1 + delta)));
+    // delta < 0 scrolls in (toward the pivot), delta > 0 scrolls out. Multiplicative so the
+    // approach feels the same at every scale. Two things differ from a plain orbit dolly:
+    //  - The far cap is generous, so you can pull well clear of any shape.
+    //  - There is no near *wall*: once the pivot is right in front, further scroll-in carries
+    //    the pivot FORWARD along the view axis, so the camera flies through the surface into
+    //    the interior (and out the far side) instead of stalling on it. With the orbit pivot
+    //    sitting at a shape's centre, scrolling in already crosses the shell; the push-through
+    //    is what lets you continue out the other side.
+    // The deep-zoom dive (opt-in, DiveController) keeps the orbit distance pinned in its own
+    // band while engaged, so the push-through branch only ever fires under manual control --
+    // exactly when flying through is what you want.
+    const MIN_ORBIT = 0.05;
+    const MAX_ORBIT = 2000;
+    const next = this.distance * (1 + delta);
+    if (next >= MIN_ORBIT) {
+      this.distance = Math.min(MAX_ORBIT, next);
+    } else {
+      // Push-through: translate the rig forward. Pace is tied to the shape's framing scale
+      // (not the vanishing sub-MIN_ORBIT remainder), so motion never stalls at the surface.
+      const forward = this.target.clone().sub(this.camera.position).normalize();
+      this.target.addScaledVector(forward, -delta * this.flyReference * 0.5);
+      this.distance = MIN_ORBIT;
+    }
     this.applyOrbit();
   }
 

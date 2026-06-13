@@ -311,7 +311,6 @@ export class RenderEngine {
         shape.formula,
         this.fractal.uniforms.formulaP.value,
         this.state.iterations,
-        this.controls.pointerNdc(),
       )
     ) {
       this.resetAccumulation();

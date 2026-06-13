@@ -55,7 +55,7 @@ export function createWorkstationState(
     sampleCount: 0,
     rendering: false,
     denoise: true,
-    diveAssist: false,
+    diveEnabled: true,
     formulaName: "",
     formulaId: shape.formula,
     formulaParams: [],
@@ -365,7 +365,7 @@ export function createStateBridge(deps: {
     state.growthColor = fx.growth.color;
     state.growthColorBlend = fx.growth.colorBlend;
     state.growthEmission = fx.growth.emission;
-    // Growth protrudes past the formula's own DE; the dive steering must respect it.
+    // Growth protrudes past the formula's own DE; the dive's surface-pin march must respect it.
     dive.growthMargin = fx.growth.length;
     state.vignetteStrength = fx.post.vignetteStrength;
     state.vignetteSoftness = fx.post.vignetteSoftness;

@@ -60,16 +60,13 @@ const state = controller.state;
   />
   <label class="flex cursor-pointer items-center justify-between pt-1 text-muted-color">
     <span>
-      Dive assist
-      <span class="block text-xs">Steer deep zooms toward detail and the cursor</span>
+      Deep-zoom dive
+      <span class="block text-xs">Infinite zoom into surface detail (off: fly through it)</span>
     </span>
     <ToggleSwitch
-      :model-value="state.diveAssist"
-      data-testid="dive-assist-toggle"
-      @update:model-value="controller.setDiveAssist($event)"
+      :model-value="state.diveEnabled"
+      data-testid="dive-enabled-toggle"
+      @update:model-value="controller.setDiveEnabled($event)"
     />
   </label>
-  <p class="pt-1 text-xs text-muted-color">
-    Drag orbit · Shift/right drag pan · Middle drag roll · Wheel zoom
-  </p>
 </template>

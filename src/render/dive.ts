@@ -1,7 +1,7 @@
 import * as THREE from "three/webgpu";
 import { getCpuDe, latticeFoldComponent } from "../fractal/cpu-de";
 import { warpCpuDe } from "../fractal/warp";
-import type { CpuDe, CpuDeParams } from "../fractal/cpu-de";
+import type { CpuDeParams } from "../fractal/cpu-de";
 import type { Stage } from "./stage";
 import type { DiveFrame, FractalFormulaId, WarpSettings } from "../fractal/types";
 
@@ -14,9 +14,9 @@ import type { DiveFrame, FractalFormulaId, WarpSettings } from "../fractal/types
  * marching constant in the shader -- stay O(1) at any zoom depth. This alone gives clean
  * deep zoom for every formula until f32 runs out inside the DE itself (~1e5x).
  *
- * Diving is steered: before each re-base the orbit pivot is retargeted onto the fractal
- * surface under the view center (an f64 CPU march of the same DE), so the zoom converges
- * onto detail instead of sailing past it into empty space.
+ * The pivot is pinned: before each re-base the orbit pivot is retargeted onto the fractal
+ * surface straight ahead under the view center (an f64 CPU march of the same DE), so the
+ * zoom converges onto detail instead of sailing past it into empty space.
  *
  * For the Apollonian the zoom is genuinely unbounded: its DE iterates T(p) = k*fold(p)
  * (lattice fold + sphere inversion, k = a/|fold(p)|^2), and the rendered set is invariant
@@ -56,37 +56,8 @@ const MAX_EXTRA_ITERS = 16;
 /** Retarget march budget, in camera-space units. */
 const MARCH_MAX_T = 40;
 const MARCH_STEPS = 384;
-/**
- * Retarget steering cone (radians): rays fanned around the view center compete for the
- * pivot, scored toward expanding regions of the map - flat facets are infinite-zoom
- * dead ends (locally planar AND non-expanding), filigree is where the detail lives.
- */
-const STEER_CONE = 0.35;
-const STEER_RING = 8;
-/**
- * Detail probe radii as fractions of the hit distance. The score is the MINIMUM across
- * scales: surviving every scale separates the tangency curve network (detailed forever,
- * where infinite zoom thrives) from bead interiors and plane facets that look curved at
- * one scale and flatten at the next.
- */
-const SCORE_SCALES = [0.3, 0.1, 0.033, 0.011];
-/** Extra DE iterations for probes so the finest probe scale actually resolves. */
-const PROBE_EXTRA_ITERS = 6;
-/** Steering runs while actively dolly-ing in below this distance. */
-const STEER_NEAR = 6.0;
-/**
- * Per-frame rate for aligning the dive axis with the surface normal at the pivot.
- * Head-on approach is what makes a 3D dive read like a 2D infinite zoom: the surface
- * pattern around the pivot fills the screen, and the camera never grazes along a wall
- * that swallows the whole frame at point-blank range.
- */
-const ALIGN_RATE = 0.12;
-/**
- * Per-frame cap (radians) on pulling the steering axis toward the mouse cursor's ray.
- * The dive smoothly pursues the surface under the cursor instead of the view center -
- * capped so a cursor parked at the screen edge turns the dive, not snaps it.
- */
-const CURSOR_PULL = 0.08;
+/** The dive's surface-pin + rescale run while actively dolly-ing in below this distance. */
+const DIVE_NEAR = 6.0;
 
 /** The scene is invariant under even-integer translation; folding keeps offset O(1). */
 function latticeFold(v: THREE.Vector3): void {
@@ -116,78 +87,31 @@ function orthonormalize(m: THREE.Matrix3): void {
   m.set(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z);
 }
 
-/** Camera-space ray through an NDC point, matching the shader's primary-ray setup. */
-function cursorRay(stage: Stage, ndc: { x: number; y: number }): THREE.Vector3 {
-  const cam = stage.camera;
-  cam.updateMatrixWorld();
-  const e = cam.matrixWorld.elements;
-  const tanHalf = Math.tan((cam.fov * Math.PI) / 180 / 2);
-  const right = new THREE.Vector3(e[0], e[1], e[2]).normalize();
-  const up = new THREE.Vector3(e[4], e[5], e[6]).normalize();
-  const fwd = new THREE.Vector3(-e[8]!, -e[9]!, -e[10]!).normalize();
-  return fwd
-    .addScaledVector(right, ndc.x * cam.aspect * tanHalf)
-    .addScaledVector(up, ndc.y * tanHalf)
-    .normalize();
-}
-
 export class DiveController {
   readonly offset = new THREE.Vector3();
   readonly basis = new THREE.Matrix3();
-  /** Scratch for deAtCam's fractal-space transform; never escapes the method. */
-  private readonly dePoint = new THREE.Vector3();
   /**
-   * Per-frame steering scratch. Assist steering marches 17 rays and probes the DE ~16
-   * times per scored hit on every dolly-in frame; cloning a Vector3 at each site churned
-   * 400-600 short-lived allocations/frame, exactly when frame pacing matters most. These
-   * reused vectors keep the steering path allocation-free. None escape their method, and
-   * detailScore's set (ds*) is disjoint from retarget's (rt*) so an inner DE probe never
-   * clobbers the outer ray basis still in use by the enclosing loop.
+   * Per-frame scratch for the surface-pin retarget and its ray march; reused so the
+   * per-dolly-in DE march stays allocation-free. None escape their method.
    */
   private readonly rtCenter = new THREE.Vector3();
-  private readonly rtUp = new THREE.Vector3();
-  private readonly rtU = new THREE.Vector3();
-  private readonly rtV = new THREE.Vector3();
-  private readonly rtDir = new THREE.Vector3();
   private readonly rtHit = new THREE.Vector3();
-  private readonly rtBest = new THREE.Vector3();
-  private readonly rtCenterPt = new THREE.Vector3();
-  private readonly dsUp = new THREE.Vector3();
-  private readonly dsU = new THREE.Vector3();
-  private readonly dsV = new THREE.Vector3();
-  private readonly dsProbe = new THREE.Vector3();
   private readonly marchRo = new THREE.Vector3();
   private readonly marchRd = new THREE.Vector3();
-  /**
-   * Reused probe params (base iterations + PROBE_EXTRA_ITERS); see detailScore. Mutable
-   * shape (no CpuDeParams annotation) so detailScore can rewrite the fields in place; it is
-   * still structurally assignable to the readonly CpuDeParams the DE functions accept.
-   */
-  private readonly probeParams = { p0: 0, p1: 0, p2: 0, p3: 0, iterations: 0 };
-  /**
-   * Persistent raw-DE binding for deAtCam's warp path. warpCpuDe needs an (x,y,z)=>d
-   * callback; allocating that closure per DE probe was the single largest dive allocation
-   * source (~290/frame on a warped assisted dive). The closure reads the formula fn and
-   * params off these fields, which deAtCam refreshes per call, so one function object
-   * serves every probe. Safe because deAtCam never overlaps its own calls (single-threaded,
-   * no re-entry through warpCpuDe).
-   */
-  private deFn: CpuDe | null = null;
-  private deParams: CpuDeParams | null = null;
-  private readonly rawDeBound = (x: number, y: number, z: number): number =>
-    this.deFn!(x, y, z, this.deParams!);
   scale = 1;
   /**
-   * Dive assist (user toggle, default off). Off: the zoom goes exactly where the camera
-   * is facing - the pivot pins to the surface straight ahead and nothing ever turns the
-   * view. On: the full autopilot - cone-sampled detail steering, cursor pursuit, and
-   * head-on normal alignment - pilots the dive toward detail that survives depth.
+   * Deep-zoom dive enabled (user toggle, default ON). On: scrolling in performs the infinite
+   * zoom-into-surface-detail - the pivot pins to the surface straight ahead, the world scale
+   * re-bases to keep f32 coordinates O(1), and the Apollonian re-anchors through its own
+   * self-similarity so the zoom never bottoms out. Off: the dive does nothing and the wheel is
+   * a pure manual push-through dolly (Stage.dolly) that flies the camera through surfaces into
+   * interiors.
    */
-  assist = false;
+  enabled = true;
   /**
    * Camera-space safety margin for surface growth (the GPU displaces geometry up to
    * this far beyond the formula DE, which the f64 CPU mirror knows nothing about).
-   * Subtracting it keeps steering and collision conservative: rays stop early rather
+   * Subtracting it keeps the surface-pin march conservative: rays stop early rather
    * than clip through spikes. Synced from the growth length by main.ts.
    */
   growthMargin = 0;
@@ -200,13 +124,8 @@ export class DiveController {
   warp: WarpSettings | null = null;
   /** Dive verification counters (read via the __kf dev hook; not part of the seam). */
   readonly debug = {
-    steers: 0,
-    sticks: 0,
-    noHits: 0,
     unfoldGains: 0,
     unfoldStalls: 0,
-    lastBest: 0,
-    lastCenter: 0,
   };
   private lastDistance = Infinity;
 
@@ -300,13 +219,15 @@ export class DiveController {
    * Run once per frame after camera input. Returns true when the transform changed
    * (the view is preserved across every change, but uniforms must be re-pushed).
    */
-  update(
-    stage: Stage,
-    formula: FractalFormulaId,
-    formulaP: THREE.Vector4,
-    iters: number,
-    pointerNdc: { x: number; y: number } | null = null,
-  ): boolean {
+  update(stage: Stage, formula: FractalFormulaId, formulaP: THREE.Vector4, iters: number): boolean {
+    // The deep-zoom dive can be switched off (see `enabled`). Off: the camera is under pure
+    // manual control - no surface-pinning, no rescale, no stall - so the wheel flies straight
+    // through surfaces (Stage.dolly) into interiors. Keep lastDistance current so toggling the
+    // dive back on mid-flight doesn't read the first frame as a dive-in.
+    if (!this.enabled) {
+      this.lastDistance = stage.distance;
+      return false;
+    }
     let changed = false;
     const params: CpuDeParams = {
       p0: formulaP.x,
@@ -316,14 +237,13 @@ export class DiveController {
       iterations: iters + this.extraIterations(stage.distance) + 2,
     };
 
-    // Steering, alignment, and rescaling all act only during an active dolly-in: steering
-    // must run continuously while diving (waiting for the rescale threshold lets the view
-    // commit to flat dead-end facets), but a settled camera must stay untouched or
-    // in-progress renders would reset every frame.
-    const divingIn = stage.distance < this.lastDistance - 1e-9 && stage.distance < STEER_NEAR;
+    // Surface-pinning and rescaling act only during an active dolly-in: the pin must run
+    // continuously while diving (waiting for the rescale threshold lets the view commit to
+    // flat dead-end facets), but a settled camera must stay untouched or in-progress renders
+    // would reset every frame.
+    const divingIn = stage.distance < this.lastDistance - 1e-9 && stage.distance < DIVE_NEAR;
     if (divingIn) {
-      changed = this.retarget(stage, formula, params, pointerNdc);
-      if (this.assist) changed = this.alignToNormal(stage, formula, params) || changed;
+      changed = this.retarget(stage, formula, params);
       if (stage.distance < D_LO) {
         // The magnification each rescale folds into `scale` is capped by the formula's
         // depth floor; at the floor the rescale stops and the dive stalls gracefully,
@@ -368,184 +288,19 @@ export class DiveController {
   }
 
   /**
-   * March a small cone of rays around the view center against the f64 CPU DE and pull
-   * the orbit pivot onto the most interesting hit: for the Apollonian, the hit whose
-   * folded point is deepest inside the inversion sphere (k = a/|q|^2 largest), i.e. the
-   * filigree where the map expands and re-anchoring works; flat facets score ~k<=1.
-   * Other formulas just prefer the hit closest to the view center. View direction moves
-   * by at most STEER_CONE per rescale, so steering reads as a gentle autopilot.
+   * Pin the orbit pivot onto the fractal surface straight ahead (an f64 CPU march of the
+   * same DE the GPU uses), so the zoom converges onto the detail under the view center
+   * instead of sailing past it into empty space. The view is never turned.
    */
-  private retarget(
-    stage: Stage,
-    formula: FractalFormulaId,
-    params: CpuDeParams,
-    pointerNdc: { x: number; y: number } | null,
-  ): boolean {
+  private retarget(stage: Stage, formula: FractalFormulaId, params: CpuDeParams): boolean {
     const cam = stage.camera.position;
     const center = this.rtCenter.copy(stage.target).sub(cam);
     if (center.lengthSq() < 1e-12) return false;
     center.normalize();
-
-    if (!this.assist) {
-      // Plain zoom: pin the pivot to the surface straight ahead (so the dive converges
-      // onto it instead of sailing past) and never turn the view.
-      const tCam = this.marchRay(cam, center, formula, params);
-      if (tCam === null || tCam < 0.02 || tCam > 12) return false;
-      stage.retargetAt(this.rtHit.copy(cam).addScaledVector(center, tCam));
-      return true;
-    }
-
-    // Aim at the surface under the mouse: pull the steering axis toward the cursor's
-    // ray at a capped per-frame rate, so the dive pursues where the user points.
-    if (pointerNdc) {
-      const cursor = cursorRay(stage, pointerNdc);
-      const angle = center.angleTo(cursor);
-      if (angle > 1e-4) {
-        center.lerp(cursor, Math.min(1, CURSOR_PULL / angle)).normalize();
-      }
-    }
-
-    const up = Math.abs(center.y) > 0.99 ? this.rtUp.set(1, 0, 0) : this.rtUp.set(0, 1, 0);
-    const u = this.rtU.crossVectors(up, center).normalize();
-    const v = this.rtV.crossVectors(center, u);
-
-    let bestScore = -Infinity;
-    let centerScore = -Infinity;
-    const bestPoint = this.rtBest;
-    const centerPoint = this.rtCenterPt;
-    let found = false;
-    // Two rings widen coverage; ray 0 is the view center itself.
-    for (let i = 0; i <= STEER_RING * 2; i += 1) {
-      const dir = this.rtDir.copy(center);
-      if (i > 0) {
-        const ring = i <= STEER_RING ? 1 : 0.45;
-        const phi = ((i - 1) / STEER_RING) * Math.PI * 2 + (i <= STEER_RING ? 0 : Math.PI / 8);
-        dir
-          .addScaledVector(u, STEER_CONE * ring * Math.cos(phi))
-          .addScaledVector(v, STEER_CONE * ring * Math.sin(phi))
-          .normalize();
-      }
-      const tCam = this.marchRay(cam, dir, formula, params);
-      if (tCam === null || tCam < 0.02 || tCam > 12) continue;
-      const hitCam = this.rtHit.copy(cam).addScaledVector(dir, tCam);
-      const score = this.detailScore(hitCam, dir, tCam, formula, params);
-      if (i === 0) {
-        centerScore = score;
-        centerPoint.copy(hitCam);
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        bestPoint.copy(hitCam);
-        found = true;
-      }
-    }
-    this.debug.lastBest = bestScore;
-    this.debug.lastCenter = centerScore;
-    if (!found) {
-      this.debug.noHits += 1;
-      return false;
-    }
-    // Center-stickiness: keep the current heading while it points at decent detail;
-    // per-frame turns toward the absolute best hit would jitter the view.
-    if (centerScore >= Math.max(0.05, 0.5 * bestScore)) {
-      this.debug.sticks += 1;
-      stage.retargetAt(centerPoint);
-      return true;
-    }
-    this.debug.steers += 1;
-    stage.retargetAt(bestPoint);
+    const tCam = this.marchRay(cam, center, formula, params);
+    if (tCam === null || tCam < 0.02 || tCam > 12) return false;
+    stage.retargetAt(this.rtHit.copy(cam).addScaledVector(center, tCam));
     return true;
-  }
-
-  /**
-   * Swing the camera around the pivot toward the surface normal there, a little per
-   * frame; see ALIGN_RATE. Runs only during active dolly-in, so settled views (and
-   * renders) are never disturbed.
-   */
-  private alignToNormal(stage: Stage, formula: FractalFormulaId, params: CpuDeParams): boolean {
-    const dir = stage.camera.position.clone().sub(stage.target);
-    const d = dir.length();
-    if (d < 1e-9) return false;
-    dir.divideScalar(d);
-
-    const h = Math.max(1e-4 * d, 1e-7);
-    const n = new THREE.Vector3();
-    const probe = new THREE.Vector3();
-    n.x =
-      this.deAtCam(probe.copy(stage.target).setX(stage.target.x + h), formula, params) -
-      this.deAtCam(probe.copy(stage.target).setX(stage.target.x - h), formula, params);
-    n.y =
-      this.deAtCam(probe.copy(stage.target).setY(stage.target.y + h), formula, params) -
-      this.deAtCam(probe.copy(stage.target).setY(stage.target.y - h), formula, params);
-    n.z =
-      this.deAtCam(probe.copy(stage.target).setZ(stage.target.z + h), formula, params) -
-      this.deAtCam(probe.copy(stage.target).setZ(stage.target.z - h), formula, params);
-    if (n.lengthSq() < 1e-18) return false;
-    n.normalize();
-    // Degenerate gradients (camera behind the surface) would flip the view through it.
-    if (n.dot(dir) < 0.05 || n.dot(dir) > 0.995) return false;
-    stage.setHeading(dir.lerp(n, ALIGN_RATE).normalize());
-    return true;
-  }
-
-  /**
-   * Camera-space distance to the surface at a camera-space point (f64 CPU DE).
-   * The growth margin is a constant offset, so the finite-difference steering normals
-   * and detailScore's second differences are unaffected by it.
-   */
-  private deAtCam(p: THREE.Vector3, formula: FractalFormulaId, params: CpuDeParams): number {
-    // Scratch, not clone: this runs per DE probe in the per-frame steering path.
-    const f = this.dePoint
-      .copy(p)
-      .applyMatrix3(this.basis)
-      .multiplyScalar(this.scale)
-      .add(this.offset);
-    // Refresh the persistent binding rather than allocating a fresh warp closure per probe.
-    this.deFn = getCpuDe(formula);
-    this.deParams = params;
-    const raw = this.warp
-      ? warpCpuDe(this.rawDeBound, this.warp, f.x, f.y, f.z)
-      : this.deFn(f.x, f.y, f.z, params);
-    return raw / this.scale - this.growthMargin;
-  }
-
-  /**
-   * Persistent surface detail at the hit: second differences of the DE probed
-   * tangentially around the hit, taken at SCORE_SCALES radii, scored as the minimum
-   * across scales. Planes and locally-smooth sphere faces fail at the finer scales no
-   * matter their tilt; the tangency curve network -- where detail survives unlimited
-   * zoom -- scores high at every scale. Re-probing each frame keeps the dive locked on.
-   */
-  private detailScore(
-    hitCam: THREE.Vector3,
-    dir: THREE.Vector3,
-    tCam: number,
-    formula: FractalFormulaId,
-    params: CpuDeParams,
-  ): number {
-    const up = Math.abs(dir.y) > 0.99 ? this.dsUp.set(1, 0, 0) : this.dsUp.set(0, 1, 0);
-    const u = this.dsU.crossVectors(up, dir).normalize();
-    const v = this.dsV.crossVectors(dir, u);
-    // Reused probe-params object (was a fresh spread per scored hit, 17/frame).
-    const probeParams = this.probeParams;
-    probeParams.p0 = params.p0;
-    probeParams.p1 = params.p1;
-    probeParams.p2 = params.p2;
-    probeParams.p3 = params.p3;
-    probeParams.iterations = params.iterations + PROBE_EXTRA_ITERS;
-    const d0 = this.deAtCam(hitCam, formula, probeParams);
-    // One reused probe point instead of a clone per probe (16 per scored hit).
-    const probePoint = this.dsProbe;
-    const probe = (axis: THREE.Vector3, sign: number, rho: number): number =>
-      this.deAtCam(probePoint.copy(hitCam).addScaledVector(axis, sign * rho), formula, probeParams);
-    let score = Infinity;
-    for (const frac of SCORE_SCALES) {
-      const rho = frac * tCam;
-      const cu = Math.abs(probe(u, 1, rho) + probe(u, -1, rho) - 2 * d0);
-      const cv = Math.abs(probe(v, 1, rho) + probe(v, -1, rho) - 2 * d0);
-      score = Math.min(score, (cu + cv) / rho);
-    }
-    return score;
   }
 
   /** Sphere-trace one camera-space ray in fractal space; camera-space hit t or null. */
@@ -559,7 +314,7 @@ export class DiveController {
     const warp = this.warp;
     // One closure per ray, not per step: the warped path used to rebuild the raw-DE
     // wrapper on every sample() call - tens of thousands of allocations per frame
-    // during an assisted dive.
+    // during a dive.
     const rawDe = (x: number, y: number, z: number): number => de(x, y, z, params);
     const sample = warp
       ? (x: number, y: number, z: number): number => warpCpuDe(rawDe, warp, x, y, z)

@@ -12,9 +12,9 @@ const MAX_EXTRA_ITERS = 16;
 const MARCH_STEPS_CAP_FACTOR = 5;
 
 describe("DiveController defaults", () => {
-  it("starts at the identity transform with assist OFF (manual control by default)", () => {
+  it("starts at the identity transform with the dive ON by default", () => {
     const d = new DiveController();
-    expect(d.assist).toBe(false);
+    expect(d.enabled).toBe(true); // deep-zoom dive is the default scroll behavior
     expect(d.scale).toBe(1);
     expect(d.offset.lengthSq()).toBe(0);
     expect(d.basis.equals(new THREE.Matrix3())).toBe(true);

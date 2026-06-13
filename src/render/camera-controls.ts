@@ -11,8 +11,6 @@ export class CameraControls {
   private lastX = 0;
   private lastY = 0;
   private changed = false;
-  private ndcX: number | null = null;
-  private ndcY: number | null = null;
 
   constructor(
     private readonly element: HTMLElement,
@@ -22,7 +20,6 @@ export class CameraControls {
     element.addEventListener("pointermove", this.onPointerMove);
     element.addEventListener("pointerup", this.onPointerUp);
     element.addEventListener("pointercancel", this.onPointerUp);
-    element.addEventListener("pointerleave", this.onPointerLeave);
     element.addEventListener("wheel", this.onWheel, { passive: false });
     element.addEventListener("contextmenu", this.onContextMenu);
   }
@@ -33,28 +30,11 @@ export class CameraControls {
     return value;
   }
 
-  /**
-   * Last pointer position in NDC (x right, y up), or null when the pointer is off the
-   * canvas. The DiveController aims the zoom at the surface under this point.
-   */
-  pointerNdc(): { x: number; y: number } | null {
-    if (this.ndcX === null || this.ndcY === null) return null;
-    return { x: this.ndcX, y: this.ndcY };
-  }
-
-  private trackPointer(event: { clientX: number; clientY: number }): void {
-    const rect = this.element.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    this.ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.ndcY = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
-  }
-
   dispose(): void {
     this.element.removeEventListener("pointerdown", this.onPointerDown);
     this.element.removeEventListener("pointermove", this.onPointerMove);
     this.element.removeEventListener("pointerup", this.onPointerUp);
     this.element.removeEventListener("pointercancel", this.onPointerUp);
-    this.element.removeEventListener("pointerleave", this.onPointerLeave);
     this.element.removeEventListener("wheel", this.onWheel);
     this.element.removeEventListener("contextmenu", this.onContextMenu);
   }
@@ -76,7 +56,6 @@ export class CameraControls {
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    this.trackPointer(event);
     if (!this.dragging || event.pointerId !== this.activePointerId) return;
     const dx = event.clientX - this.lastX;
     const dy = event.clientY - this.lastY;
@@ -100,14 +79,8 @@ export class CameraControls {
     }
   };
 
-  private readonly onPointerLeave = (): void => {
-    this.ndcX = null;
-    this.ndcY = null;
-  };
-
   private readonly onWheel = (event: WheelEvent): void => {
     event.preventDefault();
-    this.trackPointer(event);
     // Normalize deltaMode to pixels: Firefox commonly reports LINE (deltaY ~ ±3) where
     // Chrome reports PIXEL (~ ±100), which would make the dolly/dive ~30x slower per notch.
     let deltaPx = event.deltaY;

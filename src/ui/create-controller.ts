@@ -128,10 +128,11 @@ export function createController(deps: {
       state.denoise = value;
       engine.markPresent();
     },
-    setDiveAssist: (value: boolean) => {
-      // Takes effect on the next zoom gesture; the current image is untouched.
-      state.diveAssist = value;
-      dive.assist = value;
+    setDiveEnabled: (value: boolean) => {
+      // Toggles the deep-zoom dive on/off (off = manual push-through fly). Takes effect on
+      // the next wheel gesture; the current image is untouched.
+      state.diveEnabled = value;
+      dive.enabled = value;
     },
     setViewportRightInset: (px: number) => {
       engine.setRightInset(px);
@@ -342,7 +343,7 @@ export function createController(deps: {
     setGrowthParam: (key, value) => {
       if (key === "length") {
         state.growthLength = value;
-        // Keep the dive steering conservative against the displaced GPU surface.
+        // Keep the dive's surface-pin march conservative against the displaced GPU surface.
         dive.growthMargin = value;
       } else if (key === "density") state.growthDensity = value;
       else if (key === "sharpness") state.growthSharpness = value;

@@ -130,9 +130,10 @@ export interface WorkstationState {
   rendering: boolean;
   /** Edge-aware à-trous filter on the accumulating render (fades out as it converges). */
   denoise: boolean;
-  /** Dive autopilot while zooming: steer toward persistent detail, pursue the cursor,
-   * approach surfaces head-on. Off (default) zooms exactly where the camera faces. */
-  diveAssist: boolean;
+  /** Deep-zoom dive (default on): scrolling in performs the infinite zoom into surface
+   * detail (pivot pins to the surface straight ahead, world scale re-bases). Off means the
+   * wheel is a manual push-through dolly that flies the camera through surfaces. */
+  diveEnabled: boolean;
   formulaName: string;
   /** Live formula id (registry key); `formulaName` is its display name. */
   formulaId: FractalFormulaId;
@@ -228,7 +229,7 @@ export interface Controller {
   /** Raising the cap mid-render keeps accumulating; lowering it does not reset. */
   setSampleCap: (value: number) => void;
   setDenoise: (value: boolean) => void;
-  setDiveAssist: (value: boolean) => void;
+  setDiveEnabled: (value: boolean) => void;
   /** Reserve horizontal space for docked UI; the canvas resizes to the remaining width. */
   setViewportRightInset: (px: number) => void;
   /** Reserve vertical space for docked UI; the canvas resizes to the remaining height. */
