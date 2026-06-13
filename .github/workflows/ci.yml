@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# Minimal by default; the deploy job elevates what it needs.
+permissions:
+  contents: read
+
+# Never run two Pages deploys at once; let an in-progress one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -39,6 +48,52 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Build with the repo-subpath base and publish to GitHub Pages. Only on pushes to main,
+  # and only after verify passes. Requires Settings -> Pages -> Source = "GitHub Actions".
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build for Pages
+        run: pnpm build
+        env:
+          GITHUB_PAGES: "true"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
 # Note: the Playwright smoke scripts in scripts/ need a WebGPU-capable browser and stay
 # local/manual for now (see REPORT_IMPR §8.3).
