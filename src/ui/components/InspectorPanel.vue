@@ -30,22 +30,19 @@ watch(collapsed, (value) => controller.setViewportRightInset(value ? 0 : PANEL_W
 });
 
 // Section registry: a future effect is one entry here plus its section component.
-const tier1Sections = computed(() => [
+const sections = computed(() => [
   { id: "camera", title: "Camera & Lens", component: CameraLensSection },
+  { id: "palette", title: "Palette", component: PaletteSection },
   { id: "lighting", title: "Lighting", component: LightingSection },
-  { id: "effects", title: "Effects", component: EffectsSection },
-  { id: "growth", title: "Growth", component: GrowthSection },
   { id: "grade", title: "Grade", component: GradeSection },
-]);
-const tier2Sections = computed(() => [
+  { id: "effects", title: "Effects", component: EffectsSection },
+  { id: "material", title: "Material", component: MaterialSection },
   { id: "formula", title: state.formulaName, component: FormulaSection },
   { id: "warp", title: "Warp", component: WarpSection },
-  { id: "material", title: "Material", component: MaterialSection },
-  { id: "palette", title: "Palette", component: PaletteSection },
+  { id: "growth", title: "Growth", component: GrowthSection },
 ]);
 
-const tier1Ids = computed(() => tier1Sections.value.map((s) => s.id));
-const tier2Ids = computed(() => tier2Sections.value.map((s) => s.id));
+const sectionIds = computed(() => sections.value.map((s) => s.id));
 </script>
 
 <template>
@@ -93,20 +90,11 @@ const tier2Ids = computed(() => tier2Sections.value.map((s) => s.id));
 
       <Accordion
         class="mt-3"
-        :value="openFor(tier1Ids)"
+        :value="openFor(sectionIds)"
         multiple
-        @update:value="setOpen(tier1Ids, $event)"
+        @update:value="setOpen(sectionIds, $event)"
       >
-        <AccordionPanel v-for="section in tier1Sections" :key="section.id" :value="section.id">
-          <AccordionHeader>{{ section.title }}</AccordionHeader>
-          <AccordionContent>
-            <component :is="section.component" />
-          </AccordionContent>
-        </AccordionPanel>
-      </Accordion>
-
-      <Accordion :value="openFor(tier2Ids)" multiple @update:value="setOpen(tier2Ids, $event)">
-        <AccordionPanel v-for="section in tier2Sections" :key="section.id" :value="section.id">
+        <AccordionPanel v-for="section in sections" :key="section.id" :value="section.id">
           <AccordionHeader>{{ section.title }}</AccordionHeader>
           <AccordionContent>
             <component :is="section.component" />
