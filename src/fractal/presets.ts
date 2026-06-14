@@ -43,7 +43,7 @@ export const PRESETS: readonly FractalPreset[] = [
   pair(
     "crystal-reef",
     "Crystal Reef",
-    "Purple/cyan recursive crystals with shallow FPT-style focus.",
+    "Purple/cyan recursive crystals with shallow focus.",
     REEF_SPIRES,
     AMETHYST_TIDE,
   ),

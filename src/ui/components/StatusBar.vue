@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useMediaQuery } from "@vueuse/core";
 import Button from "primevue/button";
+import Popover from "primevue/popover";
 import ProgressBar from "primevue/progressbar";
-import Select from "primevue/select";
-import ToggleSwitch from "primevue/toggleswitch";
-import { SAMPLE_CAP_CHOICES } from "../../config/constants";
 import { useController } from "../composables/use-controller";
 import ExportDialog from "./ExportDialog.vue";
+import StatusControls from "./StatusControls.vue";
 
 const controller = useController();
 const state = controller.state;
 
-const exportOpen = ref(false);
-const bar = ref<HTMLElement>();
+// Below Tailwind's `sm` breakpoint (mobile portrait / narrow windows) the secondary controls
+// can't fit inline, so they collapse behind a hamburger popover. 639px (not 640) keeps the
+// `sm`-and-up bar inline and leaves the smoke harness's 640px-wide pages in the wide layout.
+const isCompact = useMediaQuery("(max-width: 639px)");
 
-// Stable array identity: a [...spread] in the template would hand Select a fresh
-// options prop on every re-render, forcing its subtree to re-render with it.
-const sampleCapOptions = [...SAMPLE_CAP_CHOICES];
+const exportOpen = ref(false);
+const menu = ref<InstanceType<typeof Popover>>();
+const bar = ref<HTMLElement>();
 
 // Keep the canvas above the bar: reserve its measured height (it never collapses).
 onMounted(() => controller.setViewportBottomInset(bar.value?.offsetHeight ?? 0));
@@ -27,6 +29,13 @@ const accumulating = computed(() => state.rendering && state.sampleCount < state
 const progress = computed(() =>
   Math.min(100, Math.round((state.sampleCount / state.sampleCap) * 100)),
 );
+
+// Shared by the inline and popover Export buttons: dismiss the popover (a no-op when it
+// isn't open) so the dialog isn't left layered under a stale overlay.
+function onExport(): void {
+  menu.value?.hide();
+  exportOpen.value = true;
+}
 </script>
 
 <template>
@@ -40,53 +49,35 @@ const progress = computed(() =>
       {{ state.sampleCount }}/{{ state.sampleCap }}
     </span>
     <ProgressBar
-      v-if="state.rendering"
+      v-if="state.rendering && !isCompact"
       :value="progress"
       :show-value="false"
       class="h-1.5 w-40"
       data-testid="render-progress"
     />
-    <span class="text-muted-color" data-testid="resolution-readout">
+    <span v-if="!isCompact" class="text-muted-color" data-testid="resolution-readout">
       {{ state.resolutionWidth }}×{{ state.resolutionHeight }}
     </span>
     <span class="flex-1" />
-    <label class="flex cursor-pointer items-center gap-2 text-muted-color">
-      Denoise
-      <ToggleSwitch
-        :model-value="state.denoise"
-        data-testid="denoise-toggle"
-        @update:model-value="controller.setDenoise($event)"
-      />
-    </label>
-    <Button
-      label="Reset"
-      icon="pi pi-undo"
-      size="small"
-      severity="secondary"
-      text
-      data-testid="reset-camera-button"
-      @click="controller.resetCamera"
-    />
-    <Button
-      label="Export"
-      icon="pi pi-image"
-      size="small"
-      severity="secondary"
-      outlined
-      data-testid="export-button"
-      @click="exportOpen = true"
-    />
-    <label class="flex items-center gap-2 text-muted-color">
-      Samples
-      <Select
-        :model-value="state.sampleCap"
-        :options="sampleCapOptions"
+
+    <!-- Wide: the secondary controls sit inline. Narrow: they collapse behind a hamburger. -->
+    <StatusControls v-if="!isCompact" @export="onExport" />
+    <template v-else>
+      <Button
+        v-tooltip.top="'Controls'"
+        icon="pi pi-bars"
         size="small"
-        class="w-28"
-        data-testid="sample-cap-select"
-        @update:model-value="controller.setSampleCap($event)"
+        severity="secondary"
+        text
+        aria-label="Controls"
+        data-testid="controls-menu-button"
+        @click="menu?.toggle($event)"
       />
-    </label>
+      <Popover ref="menu" data-testid="controls-menu">
+        <StatusControls stacked @export="onExport" />
+      </Popover>
+    </template>
+
     <Button
       v-if="accumulating"
       label="Stop"

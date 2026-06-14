@@ -34,6 +34,13 @@
 
   #app canvas {
     display: block;
+    /* Claim every touch gesture for the camera: without this the browser hijacks a
+       one-finger drag into a page scroll (firing pointercancel a few pixels in, so the
+       shape "moves only a bit") and a two-finger pinch into a page zoom. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
 
   /* The overlay never eats canvas input; interactive children opt back in. */

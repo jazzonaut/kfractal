@@ -9,6 +9,22 @@ import { createController } from "./ui/create-controller";
 import { mountUi } from "./ui/mount-ui";
 import "./styles.css";
 
+/**
+ * Register the offline service worker (public/sw.js). Production only: in dev a SW would
+ * cache Vite's module graph and fight HMR. The path is base-relative so it resolves both at
+ * the local root and under the GitHub Pages repo subpath, and its scope follows from that.
+ */
+function registerServiceWorker(): void {
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
+  const url = `${import.meta.env.BASE_URL}sw.js`;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register(url, { scope: import.meta.env.BASE_URL }).catch(() => {
+      // Offline support is a progressive enhancement; a failed registration must never
+      // block the renderer from starting.
+    });
+  });
+}
+
 /** Update the status line on the boot loading screen (#loading), if still present. */
 function setLoadingStatus(message: string): void {
   const status = document.getElementById("loading-status");
@@ -167,4 +183,5 @@ async function main(): Promise<void> {
   (window as unknown as { __kf: Record<string, unknown> }).__kf.teardown = teardown;
 }
 
+registerServiceWorker();
 void main();

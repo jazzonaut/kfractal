@@ -37,6 +37,7 @@ function spyStage() {
 
 const ev = (over: Record<string, unknown>): Record<string, unknown> => ({
   pointerId: 1,
+  pointerType: "mouse",
   button: 0,
   clientX: 50,
   clientY: 50,
@@ -70,7 +71,41 @@ describe("orbit drag", () => {
   });
 });
 
-describe("M4: multi-touch pointerId tracking", () => {
+describe("two-finger touch transform", () => {
+  it("spreading two fingers dollies in (negative delta), pinching dollies out", () => {
+    // Two fingers down 40px apart, centred at (50,50).
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 1, clientX: 30, clientY: 50 }));
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 2, clientX: 70, clientY: 50 }));
+    expect(stage.orbit).not.toHaveBeenCalled(); // a second finger does not orbit
+    // Spread to 80px apart -> zoom in -> dolly with delta < 0.
+    el.listeners.pointermove!(ev({ pointerType: "touch", pointerId: 2, clientX: 90, clientY: 50 }));
+    expect(stage.dolly).toHaveBeenCalledTimes(1);
+    expect(stage.dolly.mock.calls[0]![0] as number).toBeLessThan(0);
+  });
+
+  it("translating both fingers together pans without dollying", () => {
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 1, clientX: 30, clientY: 50 }));
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 2, clientX: 70, clientY: 50 }));
+    // Move both fingers +10x, keeping their spread constant -> pure pan, no zoom.
+    el.listeners.pointermove!(ev({ pointerType: "touch", pointerId: 1, clientX: 40, clientY: 50 }));
+    el.listeners.pointermove!(ev({ pointerType: "touch", pointerId: 2, clientX: 80, clientY: 50 }));
+    expect(stage.pan).toHaveBeenCalled();
+    // The centroid shifted right by 10px total across the two updates.
+    const totalDx = stage.pan.mock.calls.reduce((sum, call) => sum + (call[0] as number), 0);
+    expect(totalDx).toBeCloseTo(10, 6);
+  });
+
+  it("degrades from pinch back to a one-finger orbit when a finger lifts", () => {
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 1, clientX: 30, clientY: 50 }));
+    el.listeners.pointerdown!(ev({ pointerType: "touch", pointerId: 2, clientX: 70, clientY: 50 }));
+    el.listeners.pointerup!(ev({ pointerType: "touch", pointerId: 2 }));
+    // The surviving finger now orbits, re-baselined off its last position (no jump/fling).
+    el.listeners.pointermove!(ev({ pointerType: "touch", pointerId: 1, clientX: 40, clientY: 50 }));
+    expect(stage.orbit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("M4: mouse drag stays single-pointer", () => {
   it("ignores move/up events from a second pointer during a drag", () => {
     el.listeners.pointerdown!(ev({ pointerId: 1, clientX: 50 }));
     // A second finger's move must not orbit (would otherwise measure finger-to-finger distance).

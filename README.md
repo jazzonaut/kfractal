@@ -11,8 +11,12 @@ drill into every parameter and save your own.
 [![CI](https://github.com/jazzonaut/KFractal/actions/workflows/ci.yml/badge.svg)](https://github.com/jazzonaut/KFractal/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
 
-> ⚠️ **Requires WebGPU.** KFractal runs only in a WebGPU-capable browser — a recent desktop
-> build of Chrome or Edge. There is no WebGL fallback.
+**▶ [Try it live](https://jazzonaut.github.io/kfractal)** — runs entirely in your browser, no install.
+
+> ⚠️ **Requires WebGPU.** KFractal runs only in a WebGPU-capable browser — a recent build of
+> Chrome or Edge (desktop or mobile). There is no WebGL fallback.
+
+![KFractal — the Elephant Mushroom shape with an amethyst look, rendered in the workstation UI](docs/screenshot.jpg)
 
 ---
 
@@ -42,6 +46,9 @@ drill into every parameter and save your own.
   versioned, zod-validated JSON files.
 - **Progressive disclosure** — a preset picker up top, art-direction controls in the middle,
   and full per-formula parameters when you want them.
+- **Installable & offline** — install it as a PWA and it keeps working offline after the first
+  load. Touch controls (one-finger orbit, pinch to zoom, two-finger pan/twist) and a fullscreen
+  mode make it usable on mobile.
 
 ## Quick start
 
@@ -68,7 +75,8 @@ pnpm preview    # serve the production build locally
 
 1. **Pick a preset** from the dropdown, or choose a Shape and Look independently.
 2. **Orbit the camera** — drag to orbit, `Shift`+drag (or right-drag) to pan, scroll to zoom.
-   The view stays sharp in preview mode while you move.
+   On touch: one finger orbits, pinch to zoom, two fingers pan or twist to roll. The view stays
+   sharp in preview mode while you move.
 3. **Render** — when the framing is right, start the path tracer from the status strip. It
    accumulates samples up to the cap; any change resets accumulation back to preview.
 4. **Art-direct** — open the inspector to adjust lighting, lens, material, palette, and post.
@@ -100,8 +108,7 @@ The renderer owns all GPU state; three.js provides the device, render targets, a
 Vue owns only controls and status display, talking to the renderer through a single
 framework-agnostic **Controller seam**. WebGPU-only — no WebGL fallback.
 
-Design decisions are recorded as ADRs in [`docs/adr/`](docs/adr/), and the domain language and
-rendering model are documented in [`CONTEXT.md`](CONTEXT.md). See also
+The domain language and rendering model are documented in [`CONTEXT.md`](CONTEXT.md). See also
 [`docs/CODE_STANDARDS.md`](docs/CODE_STANDARDS.md) and [`docs/PATTERNS.md`](docs/PATTERNS.md).
 
 ## Development
