@@ -1,10 +1,17 @@
 import * as THREE from "three/webgpu";
 import type { CameraPreset } from "../fractal/types";
 
-// Near-vertical headroom matters for dives that approach horizontal surfaces head-on;
-// stop just short of the poles to keep the yaw/pitch parametrization stable.
+// Headings derived from a direction (retargetAt / setHeading) clamp just short of the
+// poles to keep their asin-based yaw/pitch split stable. The orbit *drag* is exempt: it
+// composes rotations about the live camera axes (see orbit), so it can sweep through and
+// past vertical without a gimbal singularity.
 const MIN_PITCH = -1.45;
 const MAX_PITCH = 1.45;
+
+// Shared read-only references for the orientation math (never mutated below).
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const ORIGIN = new THREE.Vector3(0, 0, 0);
+const VIEW_AXIS = new THREE.Vector3(0, 0, 1);
 
 export class Stage {
   readonly scene = new THREE.Scene();
@@ -50,16 +57,32 @@ export class Stage {
   }
 
   orbit(deltaYaw: number, deltaPitch: number): void {
-    // The drag arrives in screen axes (horizontal -> yaw, vertical -> pitch). When the view is
-    // rolled, those screen axes no longer line up with the yaw/pitch frame, so rotate the drag
-    // back by the roll first -- then a horizontal swipe orbits about the *tilted* vertical and
-    // the controls track the horizon instead of the world axes. (roll == 0 is the identity.)
-    const c = Math.cos(this.roll);
-    const s = Math.sin(this.roll);
-    const dYaw = deltaYaw * c - deltaPitch * s;
-    const dPitch = deltaYaw * s + deltaPitch * c;
-    this.yaw += dYaw;
-    this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + dPitch));
+    // Arcball drag: rotate about the camera's *current* axes, not the world ones. A
+    // horizontal swipe spins about the live screen-vertical (camera up); a vertical swipe
+    // about the live screen-horizontal (camera right). Because the axes track the view,
+    // the drag always orbits along the dragged screen direction at any orientation -- there
+    // is no world-up gimbal that degenerates into a twist near the poles, and roll falls out
+    // automatically, so a rolled view stays consistent too. (At yaw=pitch=roll=0 this reduces
+    // to the old yaw+=dYaw / pitch+=dPitch, keeping the equator feel unchanged.)
+    const q = this.orientation(this.yaw, this.pitch, this.roll);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    // -deltaPitch about right so a positive deltaPitch still raises the heading, matching the
+    // old pitch+=deltaPitch sign; deltaYaw about up matches the old yaw+=deltaYaw.
+    const next = new THREE.Quaternion()
+      .setFromAxisAngle(up, deltaYaw)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, -deltaPitch))
+      .multiply(q);
+    // Re-derive yaw/pitch/roll from the new orientation so presets, dive, and the rest of the
+    // system keep their parametrization. Decompose -> reconstruct is exact (orientation() is
+    // the single source of truth for both), so this never wobbles, even through vertical.
+    const dir = VIEW_AXIS.clone().applyQuaternion(next); // camera +Z == target->camera dir
+    this.yaw = Math.atan2(dir.x, dir.z);
+    this.pitch = Math.asin(Math.min(1, Math.max(-1, dir.y)));
+    // Whatever twist remains once yaw/pitch are accounted for is the roll: the rotation about
+    // the view axis that separates `next` from the no-roll orientation for this heading.
+    const rel = this.orientation(this.yaw, this.pitch, 0).invert().multiply(next);
+    this.roll = 2 * Math.atan2(rel.z, rel.w);
     this.applyOrbit();
   }
 
@@ -164,6 +187,29 @@ export class Stage {
     this.camera.updateProjectionMatrix();
   }
 
+  /**
+   * The camera orientation for a given yaw/pitch/roll: look down the spherical heading with
+   * world-up, then roll about the local view axis. This is the single definition of the view
+   * frame -- applyOrbit places the camera with it, and orbit() decomposes against it -- so the
+   * two stay exactly consistent (the decompose <-> reconstruct round-trip is lossless).
+   */
+  private orientation(yaw: number, pitch: number, roll: number): THREE.Quaternion {
+    const cosPitch = Math.cos(pitch);
+    const dir = new THREE.Vector3(
+      Math.sin(yaw) * cosPitch,
+      Math.sin(pitch),
+      Math.cos(yaw) * cosPitch,
+    );
+    // lookAt(eye, target, up): -Z faces target, so +Z == dir (the target->camera direction).
+    const q = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(dir, ORIGIN, WORLD_UP),
+    );
+    // Roll is a local rotation about the view axis (right-multiply), so up is no longer pinned
+    // to world-Y; pan reads the rolled basis, keeping panning screen-aligned.
+    if (roll !== 0) q.multiply(new THREE.Quaternion().setFromAxisAngle(VIEW_AXIS, roll));
+    return q;
+  }
+
   private applyOrbit(): void {
     const cosPitch = Math.cos(this.pitch);
     const offset = new THREE.Vector3(
@@ -172,10 +218,7 @@ export class Stage {
       Math.cos(this.yaw) * cosPitch,
     ).multiplyScalar(this.distance);
     this.camera.position.copy(this.target).add(offset);
-    this.camera.lookAt(this.target);
-    // Roll after lookAt: rotate around the local view axis so up is no longer pinned
-    // to world-Y. Pan reads the rolled basis, so panning stays screen-aligned.
-    if (this.roll !== 0) this.camera.rotateZ(this.roll);
+    this.camera.quaternion.copy(this.orientation(this.yaw, this.pitch, this.roll));
     this.camera.updateMatrixWorld();
   }
 }

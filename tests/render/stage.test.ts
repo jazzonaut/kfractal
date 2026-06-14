@@ -16,12 +16,25 @@ const { Stage } = await import("../../src/render/stage");
 const MAX_PITCH = 1.45;
 
 describe("Stage orbit / dolly clamps", () => {
-  it("clamps pitch to +/- MAX_PITCH", () => {
+  it("does not clamp the orbit drag at MAX_PITCH (arcball can pass through vertical)", () => {
     const s = new Stage();
-    s.orbit(0, 100);
-    expect(s.pitch).toBeCloseTo(MAX_PITCH, 12);
-    s.orbit(0, -100);
-    expect(s.pitch).toBeCloseTo(-MAX_PITCH, 12);
+    // Drag straight up past the old clamp in small steps. The arcball rotates about the live
+    // camera axes, so there is no world-up gimbal to freeze the heading at MAX_PITCH.
+    for (let i = 0; i < 5; i += 1) s.orbit(0, 0.3); // 1.5 rad total > MAX_PITCH (1.45)
+    expect(s.pitch).toBeGreaterThan(MAX_PITCH);
+    expect(s.pitch).toBeLessThan(Math.PI / 2);
+  });
+
+  it("sweeps cleanly over the top instead of stalling at the pole", () => {
+    const s = new Stage();
+    const startZ = s.camera.position.z; // starts on +Z looking at the origin
+    // Keep dragging up past vertical: the heading rolls over the pole, the stored pitch
+    // re-normalizes back into range and yaw flips by ~pi -- no NaN, no stall.
+    for (let i = 0; i < 7; i += 1) s.orbit(0, 0.3); // 2.1 rad total, well past pi/2
+    expect(Number.isFinite(s.pitch)).toBe(true);
+    expect(Number.isFinite(s.yaw)).toBe(true);
+    // Gone over the top: the camera is now on the -Z side of the pivot it started in front of.
+    expect(Math.sign(s.camera.position.z)).toBe(-Math.sign(startZ));
   });
 
   it("accumulates yaw without clamping", () => {
