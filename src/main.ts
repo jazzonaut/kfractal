@@ -112,6 +112,9 @@ async function main(): Promise<void> {
   const controller = createController({ engine, bridge, state });
 
   bridge.applyPreset(initialPreset.id);
+  // Push the persisted control sensitivity into the live controls now: the slider that
+  // would otherwise drive it lives in an accordion section that may be collapsed at boot.
+  engine.setControlSensitivity(state.controlSensitivity);
   mountUi(controller);
 
   // Dev/authoring hook (ADR-0007): lets the settle-shots harness and preset authors drive

@@ -17,6 +17,9 @@ export class CameraControls {
   private pinchAngle = 0;
   private pinchCx = 0;
   private pinchCy = 0;
+  // One multiplier on every gesture's per-frame delta (orbit/pan/roll/zoom, mouse and touch).
+  // The tuned base rates below are written for sensitivity 1; the user scales them as a whole.
+  private sensitivity = 1;
   private changed = false;
 
   constructor(
@@ -29,6 +32,11 @@ export class CameraControls {
     element.addEventListener("pointercancel", this.onPointerUp);
     element.addEventListener("wheel", this.onWheel, { passive: false });
     element.addEventListener("contextmenu", this.onContextMenu);
+  }
+
+  /** Scale every gesture's response. Non-positive / non-finite input falls back to 1. */
+  setSensitivity(value: number): void {
+    this.sensitivity = Number.isFinite(value) && value > 0 ? value : 1;
   }
 
   consumeChanged(): boolean {
@@ -83,9 +91,10 @@ export class CameraControls {
     const dy = event.clientY - this.lastY;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
-    if (this.mode === "roll") this.stage.rollBy(dx * 0.005);
-    else if (this.mode === "pan") this.stage.pan(dx, dy);
-    else this.stage.orbit(-dx * 0.004, -dy * 0.004);
+    const s = this.sensitivity;
+    if (this.mode === "roll") this.stage.rollBy(dx * 0.005 * s);
+    else if (this.mode === "pan") this.stage.pan(dx * s, dy * s);
+    else this.stage.orbit(-dx * 0.004 * s, -dy * 0.004 * s);
     this.changed = true;
   };
 
@@ -129,14 +138,15 @@ export class CameraControls {
     const angle = Math.atan2(b.y - a.y, b.x - a.x);
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2;
+    const s = this.sensitivity;
     // dolly(delta) scales distance by (1 + delta); pinchDist/dist - 1 is negative when the
     // fingers spread (dist grows), so spreading zooms in and pinching zooms out.
-    this.stage.dolly(this.pinchDist / dist - 1);
+    this.stage.dolly((this.pinchDist / dist - 1) * s);
     // Centroid translation pans, matching the mouse pan's raw screen-pixel deltas.
-    this.stage.pan(cx - this.pinchCx, cy - this.pinchCy);
+    this.stage.pan((cx - this.pinchCx) * s, (cy - this.pinchCy) * s);
     // Twist between the fingers rolls; wrap the delta so crossing ±π doesn't fling the roll.
     const dAngle = angle - this.pinchAngle;
-    this.stage.rollBy(Math.atan2(Math.sin(dAngle), Math.cos(dAngle)));
+    this.stage.rollBy(Math.atan2(Math.sin(dAngle), Math.cos(dAngle)) * s);
     this.pinchDist = dist;
     this.pinchAngle = angle;
     this.pinchCx = cx;
@@ -153,7 +163,7 @@ export class CameraControls {
     else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
       deltaPx *= this.element.clientHeight || window.innerHeight;
     }
-    this.stage.dolly(deltaPx * 0.001);
+    this.stage.dolly(deltaPx * 0.001 * this.sensitivity);
     this.changed = true;
   };
 

@@ -1,5 +1,11 @@
 import { reactive } from "vue";
-import { SAMPLE_CAP } from "../config/constants";
+import {
+  CONTROL_SENSITIVITY_DEFAULT,
+  CONTROL_SENSITIVITY_KEY,
+  CONTROL_SENSITIVITY_MAX,
+  CONTROL_SENSITIVITY_MIN,
+  SAMPLE_CAP,
+} from "../config/constants";
 import { EnvironmentManager } from "../render/environment";
 import type { RenderEngine } from "../render/engine";
 import { ENVIRONMENTS } from "./environments";
@@ -19,6 +25,14 @@ import type {
   WarpSettings,
 } from "./types";
 import type { WorkstationState } from "../ui/controller";
+
+/** Read the persisted control sensitivity, clamped to range; default on missing/garbage. */
+function loadControlSensitivity(): number {
+  if (typeof localStorage === "undefined") return CONTROL_SENSITIVITY_DEFAULT;
+  const raw = Number(localStorage.getItem(CONTROL_SENSITIVITY_KEY));
+  if (!Number.isFinite(raw) || raw <= 0) return CONTROL_SENSITIVITY_DEFAULT;
+  return Math.min(CONTROL_SENSITIVITY_MAX, Math.max(CONTROL_SENSITIVITY_MIN, raw));
+}
 
 /** Deep copy so the live (mutable) state never aliases a stored look's tuples. */
 function copyLights(lights: readonly LightSource[]): LightSource[] {
@@ -56,6 +70,7 @@ export function createWorkstationState(
     rendering: false,
     denoise: true,
     diveEnabled: true,
+    controlSensitivity: loadControlSensitivity(),
     formulaName: "",
     formulaId: shape.formula,
     formulaParams: [],

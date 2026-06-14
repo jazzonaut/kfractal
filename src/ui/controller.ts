@@ -218,6 +218,9 @@ export interface WorkstationState {
   resolutionHeight: number;
   /** Samples at which the progressive render stops accumulating (user-adjustable). */
   sampleCap: number;
+  /** One multiplier on every camera gesture (orbit/pan/roll/zoom, mouse and touch). A UI
+   * preference, not part of any shape/look/preset; persisted to localStorage on change. */
+  controlSensitivity: number;
 }
 
 export interface Controller {
@@ -230,6 +233,8 @@ export interface Controller {
   setSampleCap: (value: number) => void;
   setDenoise: (value: boolean) => void;
   setDiveEnabled: (value: boolean) => void;
+  /** Scale every camera gesture (mouse + touch); persisted across reloads. No render reset. */
+  setControlSensitivity: (value: number) => void;
   /** Reserve horizontal space for docked UI; the canvas resizes to the remaining width. */
   setViewportRightInset: (px: number) => void;
   /** Reserve vertical space for docked UI; the canvas resizes to the remaining height. */

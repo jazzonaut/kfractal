@@ -1,3 +1,4 @@
+import { CONTROL_SENSITIVITY_KEY } from "../config/constants";
 import { downloadTextFile } from "../core/download";
 import {
   buildLibraryFile,
@@ -133,6 +134,18 @@ export function createController(deps: {
       // the next wheel gesture; the current image is untouched.
       state.diveEnabled = value;
       dive.enabled = value;
+    },
+    setControlSensitivity: (value: number) => {
+      // A pure input-feel pref: scale the gestures and remember the choice. The rendered
+      // image doesn't change, so there's no accumulation reset or re-present.
+      state.controlSensitivity = value;
+      engine.setControlSensitivity(value);
+      try {
+        localStorage.setItem(CONTROL_SENSITIVITY_KEY, String(value));
+      } catch {
+        // Private-mode / quota failures are non-fatal: the live value still applies this
+        // session, it just won't survive a reload.
+      }
     },
     setViewportRightInset: (px: number) => {
       engine.setRightInset(px);

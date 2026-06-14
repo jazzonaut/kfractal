@@ -7,6 +7,17 @@ export const SAMPLE_CAP_CHOICES = [64, 128, 256, 512, 1024, 2048, 4096] as const
 /** Seconds between FPS readout refreshes. */
 export const FPS_INTERVAL = 0.25;
 
+/**
+ * Camera control sensitivity: one multiplier applied to every gesture (orbit, pan, roll,
+ * zoom) across both mouse and touch. 1 is the tuned baseline; the slider scales from a slow
+ * crawl to ~3x. Persisted across reloads under CONTROL_SENSITIVITY_KEY.
+ */
+export const CONTROL_SENSITIVITY_DEFAULT = 1;
+export const CONTROL_SENSITIVITY_MIN = 0.2;
+export const CONTROL_SENSITIVITY_MAX = 3;
+export const CONTROL_SENSITIVITY_STEP = 0.05;
+export const CONTROL_SENSITIVITY_KEY = "kf.controls.sensitivity";
+
 /** A named export resolution for the still-export dialog. */
 export interface ResolutionPreset {
   readonly id: string;

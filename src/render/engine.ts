@@ -134,6 +134,11 @@ export class RenderEngine {
     this.activeShape = next;
   }
 
+  /** Scale the pointer/wheel camera gestures (orbit/pan/roll/zoom, mouse and touch). */
+  setControlSensitivity(value: number): void {
+    this.controls.setSensitivity(value);
+  }
+
   // Resize the whole render pipeline (canvas buffer + every target + camera aspect) in one
   // place, shared by the window resize handler and the still exporter. `updateStyle` is false
   // during export so the on-screen canvas box stays put while only its backing buffer grows.

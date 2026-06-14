@@ -154,3 +154,25 @@ describe("M5: wheel deltaMode normalization", () => {
     expect(stage.dolly.mock.calls[0]![0] as number).toBeCloseTo(100 * 0.001, 12);
   });
 });
+
+describe("control sensitivity", () => {
+  it("scales every gesture's response by the multiplier", () => {
+    const controls = new CameraControls(el as unknown as HTMLElement, stage as unknown as Stage);
+    controls.setSensitivity(2);
+    // Orbit: dx = 10 -> orbit(-10 * 0.004 * 2) = -0.08 (double the default -0.04).
+    el.listeners.pointerdown!(ev({ button: 0, clientX: 50, clientY: 50 }));
+    el.listeners.pointermove!(ev({ clientX: 60, clientY: 50 }));
+    expect(stage.orbit.mock.calls[0]![0] as number).toBeCloseTo(-0.08, 12);
+    // Wheel dolly is scaled by the same multiplier.
+    el.listeners.wheel!(ev({ deltaY: 3, deltaMode: 0 }));
+    expect(stage.dolly.mock.calls[0]![0] as number).toBeCloseTo(3 * 0.001 * 2, 12);
+  });
+
+  it("clamps a non-positive or non-finite multiplier back to 1 (the default feel)", () => {
+    const controls = new CameraControls(el as unknown as HTMLElement, stage as unknown as Stage);
+    controls.setSensitivity(0);
+    el.listeners.pointerdown!(ev({ button: 0, clientX: 50, clientY: 50 }));
+    el.listeners.pointermove!(ev({ clientX: 60, clientY: 50 }));
+    expect(stage.orbit.mock.calls[0]![0] as number).toBeCloseTo(-0.04, 12);
+  });
+});
