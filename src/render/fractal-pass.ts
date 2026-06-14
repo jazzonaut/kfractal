@@ -9,7 +9,7 @@ import {
   makeEnvRadianceTexture,
   preethamSunColor,
 } from "./environment";
-import { getFormula } from "../fractal/registry";
+import { FORMULAS, getFormula } from "../fractal/registry";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
 import { defaultWarp, packWarpAxes, warpConstLipschitz } from "../fractal/warp";
 import type { EnvironmentData } from "./environment";
@@ -587,6 +587,56 @@ export class FractalPass {
     renderer.setRenderTarget(target);
     renderer.render(this.scene, this.camera);
     renderer.setRenderTarget(null);
+  }
+
+  /**
+   * Warm the GPU pipeline for every formula so a later preset switch doesn't stall the main
+   * thread on a first-use compile (the pathtrace shader is ~9s under FXC on D3D12; see
+   * pathtrace.ts). Compiles against `target` so the cached pipeline is keyed to the sample
+   * target's format - the same pipeline `renderTo` later hits - and runs on an isolated
+   * scene so it never swaps the material on the live mesh mid-frame. `compileAsync` builds
+   * each pipeline asynchronously, so this doesn't block the JS frame loop (the live preview
+   * keeps running); the driver's actual pipeline build can still contend for the GPU and
+   * cause minor preview hitches, but preview is cheap and this is backgrounded. We await one
+   * formula at a time to drive a progress readout. Best-effort: a formula whose compile
+   * rejects is logged and skipped so the rest still warm and the loop still reaches `total`
+   * (which dismisses the indicator). The formula already on screen resolves from cache.
+   */
+  async precompile(
+    renderer: THREE.WebGPURenderer,
+    target: THREE.RenderTarget,
+    onProgress: (done: number, total: number) => void,
+  ): Promise<void> {
+    const warmScene = new THREE.Scene();
+    const warmMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+    warmMesh.frustumCulled = false;
+    warmScene.add(warmMesh);
+    const total = FORMULAS.length;
+    let done = 0;
+    onProgress(done, total);
+    try {
+      for (const def of FORMULAS) {
+        warmMesh.material = this.materialFor(def.id);
+        // Bind the real sample target so the warmed pipeline matches what renderTo uses,
+        // not the canvas backbuffer (compileAsync keys the pipeline off the bound target).
+        renderer.setRenderTarget(target);
+        try {
+          await renderer.compileAsync(warmScene, this.camera);
+        } catch (error) {
+          // One bad shader must not abort warming the rest, nor escape as an unhandled
+          // rejection: log and carry on so `done` still climbs to `total`.
+          console.error(`Shader warm failed for formula "${def.id}"`, error);
+        }
+        done += 1;
+        onProgress(done, total);
+      }
+    } finally {
+      // The live loop's renderTo leaves the target null between frames, but reset explicitly
+      // so a clean state is guaranteed even if no frame ran during warming.
+      renderer.setRenderTarget(null);
+      warmMesh.geometry.dispose();
+      warmScene.clear();
+    }
   }
 
   dispose(): void {

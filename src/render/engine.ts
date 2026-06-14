@@ -289,6 +289,17 @@ export class RenderEngine {
     }
   }
 
+  /**
+   * Background-warm the remaining formula pipelines after the first frame is up, so a later
+   * preset/shape switch doesn't freeze the UI on a cold compile. Runs with the loop live: it
+   * compiles on an isolated scene against the same sample target the loop renders to, without
+   * blocking the JS frame loop (the live preview keeps ticking). Best-effort - a formula that
+   * fails to compile is skipped, not fatal. `onProgress(done, total)` drives the UI indicator.
+   */
+  async warmShaders(onProgress: (done: number, total: number) => void): Promise<void> {
+    await this.fractal.precompile(this.renderer, this.sampleRT, onProgress);
+  }
+
   /** Begin driving frames and listening for window resizes. */
   start(): void {
     window.addEventListener("resize", this.onWindowResize);

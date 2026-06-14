@@ -42,6 +42,45 @@ function hideLoading(): void {
   window.setTimeout(() => el.remove(), 600);
 }
 
+/**
+ * Show / update / dismiss the small "warming shaders" indicator that runs while the
+ * remaining formula pipelines compile in the background after first paint. Created lazily so
+ * it never exists when there's nothing to report; removed (with a fade) once done === total.
+ */
+function setWarmingProgress(done: number, total: number): void {
+  if (done >= total) {
+    dismissWarming();
+    return;
+  }
+  const el = document.getElementById("warming") ?? createWarmingIndicator();
+  const label = el.querySelector("#warming-label");
+  if (label) label.textContent = `Warming shaders ${done}/${total}`;
+}
+
+/** Fade out and remove the warming indicator if present. Safe to call when it's absent. */
+function dismissWarming(): void {
+  const el = document.getElementById("warming");
+  if (!el) return;
+  el.classList.add("hide");
+  el.addEventListener("transitionend", () => el.remove(), { once: true });
+  window.setTimeout(() => el.remove(), 600);
+}
+
+function createWarmingIndicator(): HTMLElement {
+  const el = document.createElement("div");
+  el.id = "warming";
+  // Announce progress to assistive tech without stealing focus.
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
+  const spinner = document.createElement("span");
+  spinner.className = "warming-spinner";
+  const label = document.createElement("span");
+  label.id = "warming-label";
+  el.append(spinner, label);
+  document.body.appendChild(el);
+  return el;
+}
+
 /** Show the full-screen fatal banner (reuses #unsupported) with a custom message. */
 function showFatal(message: string): void {
   // The fatal banner sits below the loader; drop the loader so the message is visible.
@@ -96,7 +135,18 @@ async function main(): Promise<void> {
     renderer,
     state,
     initialShape: initialPreset.shape,
-    onFirstFrame: hideLoading,
+    onFirstFrame: () => {
+      // First real pixels are up: retire the loader, then warm the other formula pipelines
+      // in the background so the first switch to each preset doesn't stall on a cold compile.
+      hideLoading();
+      // Best-effort and fire-and-forget: precompile guards each formula itself, but a defensive
+      // catch here ensures any unexpected throw still dismisses the pill rather than leaving the
+      // spinner stuck, and is logged rather than surfacing as an unhandled rejection.
+      void engine.warmShaders(setWarmingProgress).catch((error) => {
+        console.error("Shader warm-up failed", error);
+        dismissWarming();
+      });
+    },
     onFatal: showFatal,
   });
   const { stage, fractal, dive } = engine;
