@@ -1,9 +1,4 @@
-import {
-  AMETHYST_TIDE,
-  DESERT_SUN,
-  MOONLIT_LANTERNS,
-  WET_JADE,
-} from "./looks";
+import { AMETHYST_TIDE, DESERT_SUN, MOONLIT_LANTERNS, WET_JADE } from "./looks";
 import {
   BLOOM_BULB,
   BUBBLE_FOAM,
