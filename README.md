@@ -108,9 +108,6 @@ The renderer owns all GPU state; three.js provides the device, render targets, a
 Vue owns only controls and status display, talking to the renderer through a single
 framework-agnostic **Controller seam**. WebGPU-only — no WebGL fallback.
 
-The domain language and rendering model are documented in [`CONTEXT.md`](CONTEXT.md). See also
-[`docs/CODE_STANDARDS.md`](docs/CODE_STANDARDS.md) and [`docs/PATTERNS.md`](docs/PATTERNS.md).
-
 ## Development
 
 ```bash

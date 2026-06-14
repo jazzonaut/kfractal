@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount } from "vue";
 import Button from "primevue/button";
-import ColorPicker from "primevue/colorpicker";
 import Slider from "primevue/slider";
+import ColorSwatch from "./ColorSwatch.vue";
 import { useController } from "../composables/use-controller";
 import { MAX_PALETTE_STOPS, sortStopsByPosition } from "../../fractal/types";
 import { RAMP_SIZE, bakeRamp } from "../../render/ramp";
@@ -66,10 +66,9 @@ onBeforeUnmount(() => {
       class="grid grid-cols-[auto_1fr_2.75rem_auto] items-center gap-2"
       :data-testid="`gradient-stop-${index}`"
     >
-      <ColorPicker
-        :model-value="stop.color.replace(/^#/, '')"
-        format="hex"
-        @update:model-value="controller.setPaletteStopColor(stop.id, `#${$event}`)"
+      <ColorSwatch
+        :model-value="stop.color"
+        @update:model-value="controller.setPaletteStopColor(stop.id, $event)"
       />
       <Slider
         :model-value="stop.position"

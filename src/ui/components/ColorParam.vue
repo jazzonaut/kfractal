@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import ColorPicker from "primevue/colorpicker";
+import ColorSwatch from "./ColorSwatch.vue";
 
-// State carries `#rrggbb`; PrimeVue ColorPicker speaks bare `rrggbb` - normalized here.
+// State carries `#rrggbb`; ColorSwatch handles the swatch + manual hex entry.
 defineProps<{
   label: string;
   modelValue: string;
@@ -13,18 +13,16 @@ const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 </script>
 
 <template>
-  <div class="grid grid-cols-[5.5rem_auto_1fr] items-center gap-3 py-1.5" :data-testid="testid">
+  <div class="grid grid-cols-[5.5rem_1fr] items-center gap-3 py-1.5" :data-testid="testid">
     <label
       v-tooltip.left="{ value: description, disabled: !description, showDelay: 250 }"
       class="truncate text-xs text-muted-color"
       :class="{ 'cursor-help': description }"
       >{{ label }}</label
     >
-    <ColorPicker
-      :model-value="modelValue.replace(/^#/, '')"
-      format="hex"
-      @update:model-value="emit('update:modelValue', `#${$event}`)"
+    <ColorSwatch
+      :model-value="modelValue"
+      @update:model-value="emit('update:modelValue', $event)"
     />
-    <span class="text-xs uppercase tabular-nums text-muted-color">{{ modelValue }}</span>
   </div>
 </template>
