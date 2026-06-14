@@ -8,6 +8,16 @@ export const SAMPLE_CAP_CHOICES = [64, 128, 256, 512, 1024, 2048, 4096] as const
 export const FPS_INTERVAL = 0.25;
 
 /**
+ * Hard ceiling on a single frame's delta time (seconds), applied in the render loop. Its first
+ * job is to cap the camera/dive integration step after a long stall (tab backgrounded, GC
+ * pause) so the view doesn't lurch. It ALSO bounds the slowest frame time the preview
+ * auto-quality controller can ever observe: a frame above this reads as exactly this value. So
+ * PreviewQuality's `dropAboveMs` MUST stay below this (in ms = 1000×) or the "device is
+ * struggling" drop can never fire. See src/render/preview-quality.ts.
+ */
+export const MAX_FRAME_DT = 0.05;
+
+/**
  * Camera control sensitivity: one multiplier applied to every gesture (orbit, pan, roll,
  * zoom) across both mouse and touch. 1 is the tuned baseline; the slider scales from a slow
  * crawl to ~3x. Persisted across reloads under CONTROL_SENSITIVITY_KEY.
@@ -17,6 +27,15 @@ export const CONTROL_SENSITIVITY_MIN = 0.2;
 export const CONTROL_SENSITIVITY_MAX = 3;
 export const CONTROL_SENSITIVITY_STEP = 0.05;
 export const CONTROL_SENSITIVITY_KEY = "kf.controls.sensitivity";
+
+/**
+ * Live preview auto-quality (dynamic resolution scaling): the persisted on/off preference.
+ * When on, the engine lowers the live preview's internal render resolution on devices that
+ * can't sustain a smooth frame rate, and restores it as headroom returns. The progressive
+ * render and still export are unaffected (always native resolution). Defaults on for touch
+ * devices, off on desktop, when no choice is stored.
+ */
+export const AUTO_QUALITY_KEY = "kf.preview.autoQuality";
 
 /** A named export resolution for the still-export dialog. */
 export interface ResolutionPreset {

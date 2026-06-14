@@ -1,3 +1,5 @@
+import { MAX_FRAME_DT } from "../config/constants";
+
 export interface LoopCallbacks {
   readonly update: (dt: number, elapsed: number) => void;
   readonly render: (dt: number, elapsed: number) => void;
@@ -13,7 +15,8 @@ export function startLoop(callbacks: LoopCallbacks): RunningLoop {
 
   const frame = (now: number): void => {
     if (!active) return;
-    const dt = Math.min((now - previous) / 1000, 0.05);
+    // Clamp long stalls; this also bounds the auto-quality signal (see MAX_FRAME_DT).
+    const dt = Math.min((now - previous) / 1000, MAX_FRAME_DT);
     previous = now;
     const elapsed = now / 1000;
     callbacks.update(dt, elapsed);

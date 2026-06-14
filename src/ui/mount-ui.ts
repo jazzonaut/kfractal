@@ -9,7 +9,8 @@ import { CONTROLLER_KEY } from "./composables/use-controller";
 import type { Controller } from "./controller";
 
 // Aura tuned to the KFractal look: blue-tinted near-black surfaces, cyan primary.
-// Accordion internals go transparent so the inspector's glass panel shows through.
+// Accordion headers/content stay transparent so the inspector's glass panel shows
+// through; hairline panel borders give each section its visual separation.
 const KfPreset = definePreset(Aura, {
   semantic: {
     primary: {
@@ -52,7 +53,8 @@ const KfPreset = definePreset(Aura, {
       content: { padding: "0 3px 1rem 3px" },
       colorScheme: {
         dark: {
-          panel: { borderColor: "transparent" },
+          // Hairline rule between sections, matching the in-section border-white/10 dividers.
+          panel: { borderColor: "rgba(255,255,255,0.08)" },
           header: {
             background: "transparent",
             hoverBackground: "transparent",

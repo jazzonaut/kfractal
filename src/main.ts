@@ -165,6 +165,10 @@ async function main(): Promise<void> {
   // Push the persisted control sensitivity into the live controls now: the slider that
   // would otherwise drive it lives in an accordion section that may be collapsed at boot.
   engine.setControlSensitivity(state.controlSensitivity);
+  // Seed live-preview auto-quality from the persisted choice (default on for touch devices):
+  // this picks the initial render scale before the first heavy frames, so a weak device
+  // doesn't jank on boot before the runtime loop adapts.
+  engine.setAutoQuality(state.autoQuality);
   mountUi(controller);
 
   // Dev/authoring hook (ADR-0007): lets the settle-shots harness and preset authors drive

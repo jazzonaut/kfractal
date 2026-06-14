@@ -16,6 +16,7 @@ import {
   MODE_PREVIEW,
 } from "./fractal-pass";
 import { PostChain } from "./post";
+import { PreviewQuality, initialPreviewScale } from "./preview-quality";
 import { Stage } from "./stage";
 
 function makeSampleTarget(width: number, height: number): THREE.RenderTarget {
@@ -66,8 +67,23 @@ export class RenderEngine {
   // Space reserved for docked UI (inspector, status bar); the canvas gets the rest.
   private viewportRightInset = 0;
   private viewportBottomInset = 0;
+  // Display (canvas) size in CSS pixels - the box the image fills. The render targets are
+  // sized separately at `width * previewScale` (see syncRenderScale): in the live preview the
+  // heavy fractal march runs into a smaller buffer that the post pass upscales to the canvas;
+  // the progressive render and export force the scale back to native.
   private width: number;
   private height: number;
+  // Current render-target size, kept in sync with the display size and the active scale.
+  private renderWidth: number;
+  private renderHeight: number;
+  // Live-preview render-scale (1 = native). Driven by `previewQuality` when auto-quality is on;
+  // pinned at 1 otherwise, and ignored while rendering/exporting (always native there).
+  private previewScale = 1;
+  private autoQualityEnabled = false;
+  private previewQuality = new PreviewQuality();
+  // True when the previous frame actually re-marched the preview (so its frame time is a real
+  // load signal). Cleared on idle/converged/rendering frames, which the gated loop makes free.
+  private lastPreviewMarch = false;
 
   // Accumulation state, owned by the loop (ADR-0003, amended: render is explicit).
   private sampleIndexValue = 0;
@@ -112,11 +128,19 @@ export class RenderEngine {
 
     this.width = Math.max(1, window.innerWidth);
     this.height = Math.max(1, window.innerHeight);
-    this.sampleRT = makeSampleTarget(this.width, this.height);
-    this.accumulation = new AccumulationBuffer(this.width, this.height, this.sampleRT.texture);
-    this.denoiser = new AtrousDenoiser(this.width, this.height);
+    // Targets start at native; auto-quality (if enabled) seeds its scale via setAutoQuality
+    // shortly after boot, before any heavy frames are rendered.
+    this.renderWidth = this.width;
+    this.renderHeight = this.height;
+    this.sampleRT = makeSampleTarget(this.renderWidth, this.renderHeight);
+    this.accumulation = new AccumulationBuffer(
+      this.renderWidth,
+      this.renderHeight,
+      this.sampleRT.texture,
+    );
+    this.denoiser = new AtrousDenoiser(this.renderWidth, this.renderHeight);
     this.post = new PostChain(deps.renderer, this.accumulation.texture);
-    this.fractal.resize(this.width, this.height);
+    this.fractal.resize(this.renderWidth, this.renderHeight);
   }
 
   /** The current accumulated sample index (read by the authoring hook and the exporter). */
@@ -139,17 +163,56 @@ export class RenderEngine {
     this.controls.setSensitivity(value);
   }
 
-  // Resize the whole render pipeline (canvas buffer + every target + camera aspect) in one
-  // place, shared by the window resize handler and the still exporter. `updateStyle` is false
-  // during export so the on-screen canvas box stays put while only its backing buffer grows.
+  // Resize the canvas + camera aspect to a new display size, then re-derive the render targets
+  // through the active scale. Shared by the window resize handler and the still exporter.
+  // `updateStyle` is false during export so the on-screen canvas box stays put while only its
+  // backing buffer grows. The camera aspect comes from the display size; the targets follow the
+  // (uniformly scaled) render size, so the aspect is identical either way.
   resize(w: number, h: number, updateStyle = true): void {
+    this.width = w;
+    this.height = h;
     this.renderer.setSize(w, h, updateStyle);
     this.stage.resize(w, h);
-    this.fractal.resize(w, h);
-    this.sampleRT.setSize(w, h);
-    this.accumulation.resize(w, h);
-    this.denoiser.resize(w, h);
+    // Force a re-sync: the display size changed, so the render size almost certainly did too.
+    this.renderWidth = 0;
+    this.syncRenderScale();
+    // A display resize reallocates every target; drop the rolling window so that one-off
+    // realloc spike doesn't leak into the auto-quality average as a slow "frame".
+    this.previewQuality.reset();
+  }
+
+  // Resize only the render targets to match the current display size and mode scale: native
+  // while rendering or exporting (the final image is always full quality), the auto-quality
+  // tier in the live preview. A cheap no-op when the resulting size is unchanged, so the
+  // per-edit resetAccumulation path can call it on every frame without churning GPU memory.
+  private syncRenderScale(): void {
+    const scale = this.exporting || this.state.rendering ? 1 : this.previewScale;
+    const rw = Math.max(1, Math.round(this.width * scale));
+    const rh = Math.max(1, Math.round(this.height * scale));
+    if (rw === this.renderWidth && rh === this.renderHeight) return;
+    this.renderWidth = rw;
+    this.renderHeight = rh;
+    this.fractal.resize(rw, rh);
+    this.sampleRT.setSize(rw, rh);
+    this.accumulation.resize(rw, rh);
+    this.denoiser.resize(rw, rh);
     this.sceneDirty = true;
+  }
+
+  // Enable/disable live-preview auto-quality. Enabling seeds the scale from a device guess and
+  // lets the runtime loop adapt from there; disabling snaps back to native. The progressive
+  // render and export are never affected. The controller persists the choice.
+  setAutoQuality(enabled: boolean): void {
+    this.autoQualityEnabled = enabled;
+    if (enabled) {
+      this.previewScale = initialPreviewScale();
+      this.previewQuality = new PreviewQuality({ initialScale: this.previewScale });
+    } else {
+      this.previewScale = 1;
+      this.previewQuality.reset();
+    }
+    this.state.previewScale = this.previewScale;
+    this.syncRenderScale();
   }
 
   // Any change drops back to the live preview and discards the render in progress.
@@ -157,6 +220,9 @@ export class RenderEngine {
     this.sampleIndexValue = 0;
     this.state.sampleCount = 0;
     this.state.rendering = false;
+    // Back in preview: re-apply the auto-quality tier (no-op when already at preview scale, so
+    // this stays free on the per-edit/per-camera-move path that calls resetAccumulation).
+    this.syncRenderScale();
     this.sceneDirty = true;
     // A new run reuses sampleIndex 0, so a stale cache key would mask the fresh mean.
     this.denoiseCacheSample = -1;
@@ -172,17 +238,21 @@ export class RenderEngine {
     this.sampleIndexValue = 0;
     this.state.sampleCount = 0;
     this.state.rendering = true;
+    // The progressive render is the final-quality pass: force native resolution regardless of
+    // the live preview's auto-quality tier (the user opted into preview-only downscaling).
+    this.syncRenderScale();
   }
 
   // Size the live pipeline to the window minus the reserved inset (docked UI).
   resizeLiveViewport(): void {
     // Ignore live resizes while an export owns the pipeline; it restores the buffers itself.
     if (this.exporting) return;
-    this.width = Math.max(1, window.innerWidth - this.viewportRightInset);
-    this.height = Math.max(1, window.innerHeight - this.viewportBottomInset);
-    this.state.resolutionWidth = this.width;
-    this.state.resolutionHeight = this.height;
-    this.resize(this.width, this.height);
+    const w = Math.max(1, window.innerWidth - this.viewportRightInset);
+    const h = Math.max(1, window.innerHeight - this.viewportBottomInset);
+    // The readout reports the display resolution; the auto-quality badge reports the scale.
+    this.state.resolutionWidth = w;
+    this.state.resolutionHeight = h;
+    this.resize(w, h);
     this.resetAccumulation();
   }
 
@@ -351,10 +421,23 @@ export class RenderEngine {
       this.fpsElapsed = 0;
       this.fpsFrames = 0;
     }
+    // Auto-quality: react to the cost of the previous *active* preview frame. Idle/converged
+    // frames are skipped (lastPreviewMarch) - the gated loop makes them ~free, so sampling them
+    // would read as a comfortable frame rate and wrongly pull the resolution back up.
+    if (this.autoQualityEnabled && !this.state.rendering && this.lastPreviewMarch) {
+      if (this.previewQuality.sample(dt)) {
+        this.previewScale = this.previewQuality.scale;
+        this.state.previewScale = this.previewScale;
+        this.syncRenderScale();
+      }
+    }
   }
 
   private render(): void {
     if (this.fatalError) return;
+    // Only an actual preview re-march below flips this back on; idle, present-only, and
+    // path-trace frames leave it false so auto-quality samples real preview load alone.
+    this.lastPreviewMarch = false;
     try {
       if (!this.state.rendering) {
         // Preview: one sharp analytic sample, shown directly (blend factor 1).
@@ -373,6 +456,8 @@ export class RenderEngine {
           this.presentDirty = false;
           this.post.render();
           this.sampleIndexValue = 0;
+          // A real preview march ran: its frame time is a load signal for auto-quality.
+          this.lastPreviewMarch = true;
           // First real pixels are up: retire the boot loading screen.
           if (!this.firstFramePresented) {
             this.firstFramePresented = true;

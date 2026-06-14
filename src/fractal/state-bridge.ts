@@ -1,5 +1,6 @@
 import { reactive } from "vue";
 import {
+  AUTO_QUALITY_KEY,
   CONTROL_SENSITIVITY_DEFAULT,
   CONTROL_SENSITIVITY_KEY,
   CONTROL_SENSITIVITY_MAX,
@@ -14,6 +15,7 @@ import { PRESETS } from "./presets";
 import { getFormula } from "./registry";
 import { SHAPES } from "./shapes";
 import { loadUserLibrary } from "./user-library";
+import { autoQualityDefault } from "../render/preview-quality";
 import { defaultWarp, isWarpOff } from "./warp";
 import type {
   EffectsSettings,
@@ -32,6 +34,15 @@ function loadControlSensitivity(): number {
   const raw = Number(localStorage.getItem(CONTROL_SENSITIVITY_KEY));
   if (!Number.isFinite(raw) || raw <= 0) return CONTROL_SENSITIVITY_DEFAULT;
   return Math.min(CONTROL_SENSITIVITY_MAX, Math.max(CONTROL_SENSITIVITY_MIN, raw));
+}
+
+/** Read the persisted auto-quality choice; falls back to the per-device default (on for touch). */
+function loadAutoQuality(): boolean {
+  if (typeof localStorage === "undefined") return autoQualityDefault();
+  const raw = localStorage.getItem(AUTO_QUALITY_KEY);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return autoQualityDefault();
 }
 
 /** Deep copy so the live (mutable) state never aliases a stored look's tuples. */
@@ -82,6 +93,8 @@ export function createWorkstationState(
     denoise: true,
     diveEnabled: true,
     controlSensitivity: loadControlSensitivity(),
+    autoQuality: loadAutoQuality(),
+    previewScale: 1,
     formulaName: "",
     formulaId: shape.formula,
     formulaParams: [],

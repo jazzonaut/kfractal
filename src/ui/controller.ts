@@ -233,6 +233,13 @@ export interface WorkstationState {
   /** One multiplier on every camera gesture (orbit/pan/roll/zoom, mouse and touch). A UI
    * preference, not part of any shape/look/preset; persisted to localStorage on change. */
   controlSensitivity: number;
+  /** Live-preview auto-quality: when on, the engine lowers the preview's internal resolution
+   * on devices that can't sustain a smooth frame rate (render/export stay native). A UI
+   * preference; persisted to localStorage on change. */
+  autoQuality: boolean;
+  /** Current live-preview render scale (1 = native). Driven by the engine while auto-quality
+   * adapts; surfaced in the status bar as a quality badge. */
+  previewScale: number;
 }
 
 export interface Controller {
@@ -247,6 +254,8 @@ export interface Controller {
   setDiveEnabled: (value: boolean) => void;
   /** Scale every camera gesture (mouse + touch); persisted across reloads. No render reset. */
   setControlSensitivity: (value: number) => void;
+  /** Toggle live-preview auto-quality (dynamic resolution scaling); persisted across reloads. */
+  setAutoQuality: (value: boolean) => void;
   /** Reserve horizontal space for docked UI; the canvas resizes to the remaining width. */
   setViewportRightInset: (px: number) => void;
   /** Reserve vertical space for docked UI; the canvas resizes to the remaining height. */

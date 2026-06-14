@@ -47,6 +47,23 @@ const showFullscreen = computed(() => fullscreenSupported.value && isTouch.value
       @click="controller.resetCamera"
     />
     <label
+      v-tooltip.top="
+        'Lower the live preview resolution when the device cannot keep up. Render and export stay full quality.'
+      "
+      :class="
+        stacked
+          ? 'flex cursor-pointer items-center justify-between gap-2 text-muted-color'
+          : 'flex cursor-pointer items-center gap-2 text-muted-color'
+      "
+    >
+      Auto quality
+      <ToggleSwitch
+        :model-value="state.autoQuality"
+        data-testid="auto-quality-toggle"
+        @update:model-value="controller.setAutoQuality($event)"
+      />
+    </label>
+    <label
       :class="
         stacked
           ? 'flex cursor-pointer items-center justify-between gap-2 text-muted-color'

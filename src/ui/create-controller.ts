@@ -1,4 +1,4 @@
-import { CONTROL_SENSITIVITY_KEY } from "../config/constants";
+import { AUTO_QUALITY_KEY, CONTROL_SENSITIVITY_KEY } from "../config/constants";
 import { downloadTextFile } from "../core/download";
 import {
   buildLibraryFile,
@@ -170,6 +170,18 @@ export function createController(deps: {
         localStorage.setItem(CONTROL_SENSITIVITY_KEY, String(value));
       } catch {
         // Private-mode / quota failures are non-fatal: the live value still applies this
+        // session, it just won't survive a reload.
+      }
+    },
+    setAutoQuality: (value: boolean) => {
+      // A live-preview perf pref (dynamic resolution scaling). The engine seeds/clears the
+      // scale; the render/export paths are unaffected. Remember the choice across reloads.
+      state.autoQuality = value;
+      engine.setAutoQuality(value);
+      try {
+        localStorage.setItem(AUTO_QUALITY_KEY, String(value));
+      } catch {
+        // Private-mode / quota failures are non-fatal: the live setting still applies this
         // session, it just won't survive a reload.
       }
     },
