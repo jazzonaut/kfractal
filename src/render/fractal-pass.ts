@@ -10,7 +10,7 @@ import {
   preethamSunColor,
 } from "./environment";
 import { getFormula } from "../fractal/registry";
-import { MAX_LIGHTS } from "../fractal/types";
+import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
 import { defaultWarp, packWarpAxes, warpConstLipschitz } from "../fractal/warp";
 import type { EnvironmentData } from "./environment";
 import type {
@@ -19,11 +19,18 @@ import type {
   FractalShape,
   LightSource,
   Look,
+  PaletteSettings,
   SkySettings,
   WarpSettings,
 } from "../fractal/types";
 
 const DEG = Math.PI / 180;
+
+/** The palette fields the ramp packing needs; `applyLook` passes the full PaletteSettings. */
+type RampSpec = Pick<PaletteSettings, "stops" | "interpolation" | "colorSpace">;
+
+const RAMP_INTERP_INDEX = { linear: 0, smooth: 1, stepped: 2 } as const;
+const RAMP_SPACE_INDEX = { rgb: 0, oklab: 1 } as const;
 
 const SKY_MODE_INDEX = { studio: 0, preetham: 1, envmap: 2 } as const;
 
@@ -86,9 +93,17 @@ export interface SampleUniforms {
   readonly emissionP: any;
   /** trap scale, trap power. */
   readonly trapMap: any;
-  readonly colA: any;
-  readonly colB: any;
-  readonly colC: any;
+  /** Palette ramp stops as (linear rgb, position), sorted; padded with the last stop. */
+  readonly paletteStop0: any;
+  readonly paletteStop1: any;
+  readonly paletteStop2: any;
+  readonly paletteStop3: any;
+  readonly paletteStop4: any;
+  readonly paletteStop5: any;
+  readonly paletteStop6: any;
+  readonly paletteStop7: any;
+  /** stop count, interpolation index (0 linear/1 smooth/2 stepped), colour-space index (0 rgb/1 oklab). */
+  readonly paletteMeta: any;
   /** Environment (ADR-0009): sky mode, intensity, yaw (radians), turbidity. */
   readonly envP: any;
   /** Preetham sun direction xyz, cone half-angle in w. */
@@ -182,9 +197,16 @@ export class FractalPass {
       matP: uniform(new THREE.Vector4(0.55, 0.5, 0, 1.45)),
       emissionP: uniform(new THREE.Vector4(0, 0, 0, 0)),
       trapMap: uniform(new THREE.Vector2(1, 0.35)),
-      colA: uniform(linearColor("#151068")),
-      colB: uniform(linearColor("#21d9ff")),
-      colC: uniform(linearColor("#ff47f3")),
+      // Default 3-stop ramp (matches the pre-multi-stop colA/colB/colC); applyLook overwrites it.
+      paletteStop0: uniform(linearColor4("#151068", 0)),
+      paletteStop1: uniform(linearColor4("#21d9ff", 0.5)),
+      paletteStop2: uniform(linearColor4("#ff47f3", 1)),
+      paletteStop3: uniform(linearColor4("#ff47f3", 1)),
+      paletteStop4: uniform(linearColor4("#ff47f3", 1)),
+      paletteStop5: uniform(linearColor4("#ff47f3", 1)),
+      paletteStop6: uniform(linearColor4("#ff47f3", 1)),
+      paletteStop7: uniform(linearColor4("#ff47f3", 1)),
+      paletteMeta: uniform(new THREE.Vector4(3, 0, 0, 0)),
       envP: uniform(new THREE.Vector4(0, 1, 0, 3)),
       envSun: uniform(new THREE.Vector4(0, 1, 0, 0.05)),
       sunColor: uniform(new THREE.Vector3(1, 1, 1)),
@@ -253,9 +275,15 @@ export class FractalPass {
       matP: u.matP,
       emissionP: u.emissionP,
       trapMap: u.trapMap,
-      colA: u.colA,
-      colB: u.colB,
-      colC: u.colC,
+      paletteStop0: u.paletteStop0,
+      paletteStop1: u.paletteStop1,
+      paletteStop2: u.paletteStop2,
+      paletteStop3: u.paletteStop3,
+      paletteStop4: u.paletteStop4,
+      paletteStop5: u.paletteStop5,
+      paletteStop6: u.paletteStop6,
+      paletteStop7: u.paletteStop7,
+      paletteMeta: u.paletteMeta,
       envP: u.envP,
       envSun: u.envSun,
       sunColor: u.sunColor,
@@ -338,9 +366,7 @@ export class FractalPass {
     const e = linearColor(m.emissionColor);
     u.emissionP.value.set(e.x, e.y, e.z, m.emissionStrength);
 
-    u.colA.value.copy(linearColor(look.palette.baseA));
-    u.colB.value.copy(linearColor(look.palette.baseB));
-    u.colC.value.copy(linearColor(look.palette.accent));
+    this.setPaletteRamp(look.palette);
 
     this.applySky(look.sky);
     this.applyEffects(look.effects);
@@ -479,14 +505,37 @@ export class FractalPass {
     v.z = e.z;
   }
 
-  setPaletteColor(key: "baseA" | "baseB" | "accent", hex: string): void {
-    const u =
-      key === "baseA"
-        ? this.uniforms.colA
-        : key === "baseB"
-          ? this.uniforms.colB
-          : this.uniforms.colC;
-    u.value.copy(linearColor(hex));
+  /**
+   * Pack the palette ramp into the stop uniforms (linear rgb + position, sorted), padding unused
+   * slots with the last stop. The shader blends these analytically in `gradient()` — the same
+   * uniform path the pre-multi-stop colA/colB/colC used, so linear/rgb reproduces the old look.
+   */
+  setPaletteRamp(palette: RampSpec): void {
+    const u = this.uniforms;
+    const slots = [
+      u.paletteStop0,
+      u.paletteStop1,
+      u.paletteStop2,
+      u.paletteStop3,
+      u.paletteStop4,
+      u.paletteStop5,
+      u.paletteStop6,
+      u.paletteStop7,
+    ];
+    const sorted = sortStopsByPosition(palette.stops);
+    const count = Math.min(sorted.length, MAX_PALETTE_STOPS);
+    for (let i = 0; i < slots.length; i += 1) {
+      const stop = sorted[Math.min(i, count - 1)]!;
+      const c = linearColor(stop.color);
+      // Clamp to [0,1] to match the preview's bakeRamp (codec also rejects out-of-range imports).
+      slots[i]!.value.set(c.x, c.y, c.z, Math.min(1, Math.max(0, stop.position)));
+    }
+    u.paletteMeta.value.set(
+      count,
+      RAMP_INTERP_INDEX[palette.interpolation],
+      RAMP_SPACE_INDEX[palette.colorSpace],
+      0,
+    );
   }
 
   setTrapScale(value: number): void {

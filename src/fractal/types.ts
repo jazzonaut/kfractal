@@ -108,10 +108,39 @@ export interface OrbitTrapSettings {
   power: number;
 }
 
+/** How the ramp blends between adjacent stops. */
+export type RampInterpolation = "linear" | "smooth" | "stepped";
+
+/** Colour space the per-segment interpolation happens in. */
+export type RampColorSpace = "rgb" | "oklab";
+
+/** One colour stop on the orbit-trap ramp: an sRGB `#rrggbb` colour at position 0..1. */
+export interface ColorStop {
+  readonly position: number;
+  readonly color: string;
+}
+
+/**
+ * Upper bound on ramp stops. GPU-bound: the WGSL declares a fixed `array<vec4<f32>, 8>` and 8
+ * `paletteStop0..7` uniforms, and `fractal-pass.setPaletteRamp` packs into 8 fixed slots. Raising
+ * this REQUIRES widening the WGSL array, its entry params, and the slots/uniforms in fractal-pass
+ * to match — otherwise stops past 8 are silently dropped on the GPU. ramp.test.ts guards the count.
+ */
+export const MAX_PALETTE_STOPS = 8;
+
+/** A position-sorted (ascending) copy of the stops; the input is never mutated. */
+export function sortStopsByPosition<T extends { readonly position: number }>(
+  stops: readonly T[],
+): T[] {
+  // eslint-disable-next-line no-array-sort -- operating on a copy, the input is untouched
+  return [...stops].sort((a, b) => a.position - b.position);
+}
+
 export interface PaletteSettings {
-  readonly baseA: string;
-  readonly baseB: string;
-  readonly accent: string;
+  /** Ordered (by position) colour stops; at least 2. */
+  readonly stops: readonly ColorStop[];
+  readonly interpolation: RampInterpolation;
+  readonly colorSpace: RampColorSpace;
   saturation: number;
   exposure: number;
   contrast: number;

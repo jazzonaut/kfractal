@@ -59,9 +59,6 @@ fn ${RENDER_SAMPLE_FN}(
   matP: vec4<f32>,
   emissionP: vec4<f32>,
   trapMap: vec2<f32>,
-  colA: vec3<f32>,
-  colB: vec3<f32>,
-  colC: vec3<f32>,
   envP: vec4<f32>,
   envSun: vec4<f32>,
   sunColor: vec3<f32>,
@@ -84,7 +81,16 @@ fn ${RENDER_SAMPLE_FN}(
   warpP: vec4<f32>,
   warpQ: vec4<f32>,
   envTex: texture_2d<f32>,
-  envTexSampler: sampler
+  envTexSampler: sampler,
+  paletteStop0: vec4<f32>,
+  paletteStop1: vec4<f32>,
+  paletteStop2: vec4<f32>,
+  paletteStop3: vec4<f32>,
+  paletteStop4: vec4<f32>,
+  paletteStop5: vec4<f32>,
+  paletteStop6: vec4<f32>,
+  paletteStop7: vec4<f32>,
+  paletteMeta: vec4<f32>
 ) -> vec4<f32> {
   let px = vec2<u32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * resolution);
   gPixelSeed = pcgHash(px.x ^ pcgHash(px.y));
@@ -130,9 +136,13 @@ fn ${RENDER_SAMPLE_FN}(
   gMatP = matP;
   gEmission = emissionP;
   gTrapMap = trapMap;
-  gColA = colA;
-  gColB = colB;
-  gColC = colC;
+  gStops = array<vec4<f32>, 8>(
+    paletteStop0, paletteStop1, paletteStop2, paletteStop3,
+    paletteStop4, paletteStop5, paletteStop6, paletteStop7,
+  );
+  gStopCount = i32(paletteMeta.x);
+  gRampInterp = i32(paletteMeta.y);
+  gRampSpace = i32(paletteMeta.z);
   gEnvMode = i32(envP.x);
   gEnvIntensity = envP.y;
   gEnvYaw = envP.z;
@@ -292,9 +302,12 @@ var<private> gAmbient: f32;
 var<private> gMatP: vec4<f32>;
 var<private> gEmission: vec4<f32>;
 var<private> gTrapMap: vec2<f32>;
-var<private> gColA: vec3<f32>;
-var<private> gColB: vec3<f32>;
-var<private> gColC: vec3<f32>;
+// Orbit-trap palette ramp: up to MAX_PALETTE_STOPS stops as (linear rgb, position), sorted by
+// position. gStopCount in use; gRampInterp 0 linear / 1 smooth / 2 stepped; gRampSpace 0 rgb / 1 oklab.
+var<private> gStops: array<vec4<f32>, 8>;
+var<private> gStopCount: i32;
+var<private> gRampInterp: i32;
+var<private> gRampSpace: i32;
 // Environment lighting (ADR-0009): 0 studio fill, 1 preetham, 2 procedural env map.
 var<private> gEnvMode: i32;
 var<private> gEnvIntensity: f32;
@@ -556,12 +569,61 @@ fn trapTone(trap: f32) -> f32 {
   return clamp(pow(max(trap, 0.0) * gTrapMap.x, gTrapMap.y), 0.0, 1.0);
 }
 
+// Linear sRGB → OKLab (Björn Ottosson); mirrors the CPU baker so the editor preview agrees.
+fn linearToOklab(c: vec3<f32>) -> vec3<f32> {
+  let l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+  let m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+  let s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+  let lc = sign(l) * pow(abs(l), 1.0 / 3.0);
+  let mc = sign(m) * pow(abs(m), 1.0 / 3.0);
+  let sc = sign(s) * pow(abs(s), 1.0 / 3.0);
+  return vec3<f32>(
+    0.2104542553 * lc + 0.793617785 * mc - 0.0040720468 * sc,
+    1.9779984951 * lc - 2.428592205 * mc + 0.4505937099 * sc,
+    0.0259040371 * lc + 0.7827717662 * mc - 0.808675766 * sc,
+  );
+}
+
+fn oklabToLinear(c: vec3<f32>) -> vec3<f32> {
+  let lc = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+  let mc = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+  let sc = c.x - 0.0894841775 * c.y - 1.291485548 * c.z;
+  let l = lc * lc * lc;
+  let m = mc * mc * mc;
+  let s = sc * sc * sc;
+  return vec3<f32>(
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  );
+}
+
+// The orbit-trap palette: an analytic blend over the live stop list (linear-RGB uniforms, the
+// same path the pre-multi-stop colA/colB/colC used, so linear/rgb reproduces the old look
+// exactly). Holds flat outside the first/last stop; stepped takes the lower stop (hard bands).
 fn gradient(tIn: f32) -> vec3<f32> {
-  let x = clamp(tIn, 0.0, 1.0) * 2.0;
-  if (x < 1.0) {
-    return mix(gColA, gColB, x);
+  let t = clamp(tIn, 0.0, 1.0);
+  let last = gStopCount - 1;
+  if (t <= gStops[0].w) { return gStops[0].rgb; }
+  if (t >= gStops[last].w) { return gStops[last].rgb; }
+  var lo = 0;
+  for (var i = 0; i < last; i = i + 1) {
+    if (t >= gStops[i].w && t <= gStops[i + 1].w) { lo = i; break; }
   }
-  return mix(gColB, gColC, x - 1.0);
+  let hi = lo + 1;
+  let span = gStops[hi].w - gStops[lo].w;
+  var f = select(0.0, (t - gStops[lo].w) / span, span > 1e-6);
+  if (gRampInterp == 2) {
+    f = 0.0;
+  } else if (gRampInterp == 1) {
+    f = f * f * (3.0 - 2.0 * f);
+  }
+  if (gRampSpace == 1) {
+    let a = linearToOklab(gStops[lo].rgb);
+    let b = linearToOklab(gStops[hi].rgb);
+    return clamp(oklabToLinear(mix(a, b, f)), vec3<f32>(0.0), vec3<f32>(1.0));
+  }
+  return mix(gStops[lo].rgb, gStops[hi].rgb, f);
 }
 
 fn surfaceMaterial(trap: f32, pos: vec3<f32>) -> Material {

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defaultEffects } from "./effects-defaults";
 import { DEFAULT_SKY, ENVIRONMENTS } from "./environments";
 import { FORMULAS, getFormula } from "./registry";
-import { MAX_LIGHTS } from "./types";
+import { MAX_LIGHTS, MAX_PALETTE_STOPS } from "./types";
 import { clampWarp, isWarpOff } from "./warp";
 import type { FractalFormulaId, FractalPreset, FractalShape, LibraryKind, Look } from "./types";
 
@@ -113,9 +113,15 @@ export const lookSchema = z.object({
     emissionColor: hexColor,
   }),
   palette: z.object({
-    baseA: hexColor,
-    baseB: hexColor,
-    accent: hexColor,
+    // Multi-stop ramp, capped like lights so import honours the same MAX_PALETTE_STOPS the editor
+    // enforces. Positions are clamped to [0,1] — the render reads them straight into a uniform, so
+    // an out-of-range import would otherwise disagree with the [0,1]-clamped preview.
+    stops: z
+      .array(z.object({ position: finite.min(0).max(1), color: hexColor }))
+      .min(2)
+      .max(MAX_PALETTE_STOPS),
+    interpolation: z.enum(["linear", "smooth", "stepped"]),
+    colorSpace: z.enum(["rgb", "oklab"]),
     saturation: finite,
     exposure: finite,
     contrast: finite,
@@ -178,9 +184,12 @@ export const userPresetSchema = presetSchema.extend(stamps);
  * `effects.growth` (look-altering): both are optional/defaulted, so a v5 file imports as
  * "warp/growth absent, use defaults", while a current export carries version 6 so older
  * v5-era builds reject it (newer-version guard) instead of silently dropping those fields.
+ * Version 7 replaces the palette's fixed baseA/baseB/accent with a required multi-stop ramp
+ * (`stops` + interpolation/colorSpace); there is no migration, so pre-ramp files are rejected
+ * (pre-release app, no installed base to preserve).
  * Rule: any schema-shape change bumps the version.
  */
-export const LIBRARY_FILE_VERSION = 6;
+export const LIBRARY_FILE_VERSION = 7;
 
 /**
  * v4 → v5 look migration: the old single key light becomes lights[0] (directional),

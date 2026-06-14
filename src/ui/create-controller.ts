@@ -12,14 +12,17 @@ import { PRESETS } from "../fractal/presets";
 import { getFormula } from "../fractal/registry";
 import { mutateFormulaSettings, rollShape } from "../fractal/shape-generator";
 import { SHAPES } from "../fractal/shapes";
+import { nextPaletteStopId } from "../fractal/state-bridge";
 import type { StateBridge } from "../fractal/state-bridge";
-import { MAX_LIGHTS } from "../fractal/types";
+import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
 import type {
   AuthoringStamps,
   FractalPreset,
   FractalShape,
   LibraryKind,
   Look,
+  RampColorSpace,
+  RampInterpolation,
 } from "../fractal/types";
 import { saveUserLibrary } from "../fractal/user-library";
 import type { RenderEngine } from "../render/engine";
@@ -31,6 +34,19 @@ import type { Controller, LibraryActionResult, WorkstationState } from "./contro
  * restart the render (`resetAccumulation`) or merely re-present (`engine.markPresent`). The
  * library/authoring methods sit on top of the generic `KIND_OPS` surface.
  */
+/** Midpoint of two `#rrggbb` colours in sRGB byte space — the starting tint for a new stop. */
+function midpointHex(a: string, b: string): string {
+  const pa = parseInt(a.replace(/^#/, ""), 16);
+  const pb = parseInt(b.replace(/^#/, ""), 16);
+  const mid = (shift: number) => {
+    const ca = (pa >> shift) & 0xff;
+    const cb = (pb >> shift) & 0xff;
+    return Math.round((ca + cb) / 2);
+  };
+  const hex = ((mid(16) << 16) | (mid(8) << 8) | mid(0)).toString(16).padStart(6, "0");
+  return `#${hex}`;
+}
+
 export function createController(deps: {
   engine: RenderEngine;
   bridge: StateBridge;
@@ -39,6 +55,16 @@ export function createController(deps: {
   const { engine, bridge, state } = deps;
   const { stage, fractal, dive, post } = engine;
   const resetAccumulation = (): void => engine.resetAccumulation();
+
+  // Re-bake the palette LUT from the live stop list + modes, then restart the render.
+  const applyRamp = (): void => {
+    fractal.setPaletteRamp({
+      stops: state.paletteStops,
+      interpolation: state.paletteInterpolation,
+      colorSpace: state.paletteColorSpace,
+    });
+    resetAccumulation();
+  };
 
   // One generic authoring surface over the three library kinds (ADR-0010).
   type LibraryItem = FractalShape | Look | FractalPreset;
@@ -399,12 +425,49 @@ export function createController(deps: {
       fractal.setEmissionColor(hex);
       resetAccumulation();
     },
-    setPaletteColor: (key, hex) => {
-      if (key === "baseA") state.paletteBaseA = hex;
-      else if (key === "baseB") state.paletteBaseB = hex;
-      else state.paletteAccent = hex;
-      fractal.setPaletteColor(key, hex);
-      resetAccumulation();
+    setPaletteStopColor: (id, hex) => {
+      state.paletteStops = state.paletteStops.map((s) => (s.id === id ? { ...s, color: hex } : s));
+      applyRamp();
+    },
+    setPaletteStopPosition: (id, position) => {
+      const p = Math.min(1, Math.max(0, position));
+      state.paletteStops = state.paletteStops.map((s) => (s.id === id ? { ...s, position: p } : s));
+      applyRamp();
+    },
+    addPaletteStop: () => {
+      if (state.paletteStops.length >= MAX_PALETTE_STOPS) return;
+      const sorted = sortStopsByPosition(state.paletteStops);
+      // Drop the new stop into the widest gap so repeated adds spread out evenly.
+      let lo = sorted[0]!;
+      let hi = sorted[sorted.length - 1]!;
+      let widest = -1;
+      for (let i = 0; i < sorted.length - 1; i += 1) {
+        const gap = sorted[i + 1]!.position - sorted[i]!.position;
+        if (gap > widest) {
+          widest = gap;
+          lo = sorted[i]!;
+          hi = sorted[i + 1]!;
+        }
+      }
+      const position = (lo.position + hi.position) / 2;
+      state.paletteStops = [
+        ...state.paletteStops,
+        { id: nextPaletteStopId(), position, color: midpointHex(lo.color, hi.color) },
+      ];
+      applyRamp();
+    },
+    removePaletteStop: (id) => {
+      if (state.paletteStops.length <= 2) return;
+      state.paletteStops = state.paletteStops.filter((s) => s.id !== id);
+      applyRamp();
+    },
+    setPaletteInterpolation: (mode: RampInterpolation) => {
+      state.paletteInterpolation = mode;
+      applyRamp();
+    },
+    setPaletteColorSpace: (mode: RampColorSpace) => {
+      state.paletteColorSpace = mode;
+      applyRamp();
     },
     setTrapScale: (value: number) => {
       state.trapScale = value;

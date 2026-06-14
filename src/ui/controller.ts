@@ -1,4 +1,5 @@
 import type {
+  ColorStop,
   FractalFormulaId,
   FractalPreset,
   FractalShape,
@@ -7,12 +8,23 @@ import type {
   LightSource,
   LightType,
   Look,
+  RampColorSpace,
+  RampInterpolation,
   SkyMode,
   UserLook,
   UserPreset,
   UserShape,
   WarpAxis,
 } from "../fractal/types";
+
+/**
+ * A palette ramp stop as the editor sees it: a domain {@link ColorStop} plus a session-stable
+ * `id`. The id keys the editor list (Vue keys + per-stop edits) so reordering/removing a stop
+ * never rebinds a control to the wrong one; it is never serialized — `snapshotLook` strips it.
+ */
+export interface PaletteStop extends ColorStop {
+  readonly id: string;
+}
 
 /** A live, schema-driven formula control (built from the registry's param defs). */
 export interface FormulaParamState {
@@ -77,8 +89,6 @@ export interface EnvironmentOption {
   readonly id: string;
   readonly name: string;
 }
-
-export type PaletteColorKey = "baseA" | "baseB" | "accent";
 
 /** Outcome of a library authoring action; `error` is user-facing text for the toast. */
 export interface LibraryActionResult {
@@ -198,9 +208,11 @@ export interface WorkstationState {
   fogColor: string;
   glowColor: string;
   growthColor: string;
-  paletteBaseA: string;
-  paletteBaseB: string;
-  paletteAccent: string;
+  /** Orbit-trap palette ramp stops, ≥2. Stored in insertion order; the editor sorts by
+   * position for display. Each carries a session-stable id (see {@link PaletteStop}). */
+  paletteStops: PaletteStop[];
+  paletteInterpolation: RampInterpolation;
+  paletteColorSpace: RampColorSpace;
   trapScale: number;
   trapPower: number;
   /** Domain warp (ADR-0012, shape-side; zero amounts are identity). */
@@ -289,7 +301,15 @@ export interface Controller {
   /** Post-side only (vignette/grain/distortion): no accumulation reset, like setDenoise. */
   setPostFxParam: (key: PostFxParamKey, value: number) => void;
   setEmissionColor: (hex: string) => void;
-  setPaletteColor: (key: PaletteColorKey, hex: string) => void;
+  /** Palette ramp edits, addressed by stable stop id; all re-bake the LUT and reset accumulation. */
+  setPaletteStopColor: (id: string, hex: string) => void;
+  setPaletteStopPosition: (id: string, position: number) => void;
+  /** Inserts a stop at the widest gap with the interpolated colour; capped at MAX_PALETTE_STOPS. */
+  addPaletteStop: () => void;
+  /** Removes the stop with this id; no-op below 2 stops. */
+  removePaletteStop: (id: string) => void;
+  setPaletteInterpolation: (mode: RampInterpolation) => void;
+  setPaletteColorSpace: (mode: RampColorSpace) => void;
   setTrapScale: (value: number) => void;
   setTrapPower: (value: number) => void;
   /** Domain warp (ADR-0012): shape-side, uniforms-only (no recompile, no dive reset). */

@@ -1,34 +1,53 @@
 <script setup lang="ts">
+import SelectButton from "primevue/selectbutton";
 import ParamSlider from "../ParamSlider.vue";
-import ColorParam from "../ColorParam.vue";
+import GradientStops from "../GradientStops.vue";
 import { useController } from "../../composables/use-controller";
+import type { RampColorSpace, RampInterpolation } from "../../../fractal/types";
 
 const controller = useController();
 const state = controller.state;
+
+const interpolationOptions: { label: string; value: RampInterpolation }[] = [
+  { label: "Linear", value: "linear" },
+  { label: "Smooth", value: "smooth" },
+  { label: "Stepped", value: "stepped" },
+];
+
+const colorSpaceOptions: { label: string; value: RampColorSpace }[] = [
+  { label: "RGB", value: "rgb" },
+  { label: "OKLab", value: "oklab" },
+];
 </script>
 
 <template>
-  <ColorParam
-    label="Base A"
-    :model-value="state.paletteBaseA"
-    description="First base colour of the orbit-trap palette."
-    testid="param-palette-base-a"
-    @update:model-value="controller.setPaletteColor('baseA', $event)"
-  />
-  <ColorParam
-    label="Base B"
-    :model-value="state.paletteBaseB"
-    description="Second base colour, blended against Base A across the trap value."
-    testid="param-palette-base-b"
-    @update:model-value="controller.setPaletteColor('baseB', $event)"
-  />
-  <ColorParam
-    label="Accent"
-    :model-value="state.paletteAccent"
-    description="Highlight colour applied to the palette peaks."
-    testid="param-palette-accent"
-    @update:model-value="controller.setPaletteColor('accent', $event)"
-  />
+  <GradientStops />
+  <div class="mt-1 flex flex-wrap items-center justify-between gap-2 py-1.5">
+    <SelectButton
+      v-tooltip.left="'How adjacent stops blend: Linear, eased (Smooth), or hard bands (Stepped).'"
+      :model-value="state.paletteInterpolation"
+      :options="interpolationOptions"
+      option-label="label"
+      option-value="value"
+      :allow-empty="false"
+      size="small"
+      data-testid="param-palette-interpolation"
+      @update:model-value="controller.setPaletteInterpolation($event)"
+    />
+    <SelectButton
+      v-tooltip.left="
+        'Colour space the blend runs in. OKLab keeps mid-tones vivid; RGB matches the classic look.'
+      "
+      :model-value="state.paletteColorSpace"
+      :options="colorSpaceOptions"
+      option-label="label"
+      option-value="value"
+      :allow-empty="false"
+      size="small"
+      data-testid="param-palette-color-space"
+      @update:model-value="controller.setPaletteColorSpace($event)"
+    />
+  </div>
   <ParamSlider
     label="Trap scale"
     :min="0.2"

@@ -11,6 +11,7 @@ import { SHAPES } from "../../src/fractal/shapes";
 import { LOOKS } from "../../src/fractal/looks";
 import { PRESETS } from "../../src/fractal/presets";
 import { ENVIRONMENTS } from "../../src/fractal/environments";
+import { MAX_PALETTE_STOPS } from "../../src/fractal/types";
 import type { FractalShape, Look } from "../../src/fractal/types";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -96,6 +97,36 @@ describe("migrateLookLightV4", () => {
   it("is a pass-through when lights already exist", () => {
     const v5 = { id: "x", name: "X", lights: [{ type: "directional" }] };
     expect(migrateLookLightV4(v5)).toBe(v5);
+  });
+});
+
+describe("palette ramp", () => {
+  it("round-trips a curated multi-stop ramp", () => {
+    const result = parseLibraryFile(buildLibraryFile("look", LOOKS[0]!));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "look") {
+      expect(result.item.palette.stops.length).toBeGreaterThanOrEqual(2);
+      expect(result.item.palette.interpolation).toBe("linear");
+      expect(result.item.palette.colorSpace).toBe("rgb");
+    }
+  });
+
+  it("rejects a palette with more than MAX_PALETTE_STOPS stops", () => {
+    const file = JSON.parse(buildLibraryFile("look", LOOKS[0]!)) as Record<string, unknown>;
+    const look = file.item as Record<string, unknown>;
+    const palette = look.palette as Record<string, unknown>;
+    palette.stops = Array.from({ length: MAX_PALETTE_STOPS + 1 }, (_, i) => ({
+      position: i / MAX_PALETTE_STOPS,
+      color: "#808080",
+    }));
+    expect(parseLibraryFile(JSON.stringify(file)).ok).toBe(false);
+  });
+
+  it("rejects a palette with no stops (pre-ramp files are not supported)", () => {
+    const file = JSON.parse(buildLibraryFile("look", LOOKS[0]!)) as Record<string, unknown>;
+    const look = file.item as Record<string, unknown>;
+    delete (look.palette as Record<string, unknown>).stops;
+    expect(parseLibraryFile(JSON.stringify(file)).ok).toBe(false);
   });
 });
 

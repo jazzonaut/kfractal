@@ -44,6 +44,17 @@ function copyLights(lights: readonly LightSource[]): LightSource[] {
 }
 
 /**
+ * Session-stable ids for palette ramp stops (UI-only, never serialized). A monotonic counter
+ * is enough: ids only need to stay distinct within one editing session so the editor list keys
+ * survive add/remove/reorder. Shared with the controller's `addPaletteStop`.
+ */
+let stopIdSeq = 0;
+export function nextPaletteStopId(): string {
+  stopIdSeq += 1;
+  return `stop-${stopIdSeq}`;
+}
+
+/**
  * Build the flat, reactive UI state (ADR-0006) from a preset's two nested halves plus the
  * persisted user library. This is the canonical store the controller setters write to and the
  * snapshot helpers read back from.
@@ -129,9 +140,13 @@ export function createWorkstationState(
     fogColor: look.effects.fog.color,
     glowColor: look.effects.glow.color,
     growthColor: look.effects.growth.color,
-    paletteBaseA: look.palette.baseA,
-    paletteBaseB: look.palette.baseB,
-    paletteAccent: look.palette.accent,
+    paletteStops: look.palette.stops.map((s) => ({
+      id: nextPaletteStopId(),
+      position: s.position,
+      color: s.color,
+    })),
+    paletteInterpolation: look.palette.interpolation,
+    paletteColorSpace: look.palette.colorSpace,
     trapScale: shape.trap.scale,
     trapPower: shape.trap.power,
     warpTwist: (shape.warp ?? defaultWarp()).twist,
@@ -354,9 +369,13 @@ export function createStateBridge(deps: {
     state.bloomThreshold = look.palette.bloomThreshold;
     state.saturation = look.palette.saturation;
     state.emissionColor = look.material.emissionColor;
-    state.paletteBaseA = look.palette.baseA;
-    state.paletteBaseB = look.palette.baseB;
-    state.paletteAccent = look.palette.accent;
+    state.paletteStops = look.palette.stops.map((s) => ({
+      id: nextPaletteStopId(),
+      position: s.position,
+      color: s.color,
+    }));
+    state.paletteInterpolation = look.palette.interpolation;
+    state.paletteColorSpace = look.palette.colorSpace;
     const fx = look.effects;
     state.fogDensity = fx.fog.density;
     state.fogHeight = fx.fog.height;
@@ -484,9 +503,9 @@ export function createStateBridge(deps: {
       emissionColor: state.emissionColor,
     },
     palette: {
-      baseA: state.paletteBaseA,
-      baseB: state.paletteBaseB,
-      accent: state.paletteAccent,
+      stops: state.paletteStops.map((s) => ({ position: s.position, color: s.color })),
+      interpolation: state.paletteInterpolation,
+      colorSpace: state.paletteColorSpace,
       saturation: state.saturation,
       exposure: state.exposure,
       contrast: state.contrast,

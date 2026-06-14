@@ -1,6 +1,17 @@
 import { defaultEffects } from "./effects-defaults";
 import { DEFAULT_SKY } from "./environments";
-import type { LightSource, Look } from "./types";
+import type { LightSource, Look, PaletteSettings } from "./types";
+
+/** A linear/RGB palette ramp with the given colours spread evenly across 0..1. */
+function evenRamp(
+  colors: string[],
+): Pick<PaletteSettings, "stops" | "interpolation" | "colorSpace"> {
+  return {
+    stops: colors.map((color, i) => ({ position: i / (colors.length - 1), color })),
+    interpolation: "linear",
+    colorSpace: "rgb",
+  };
+}
 
 /**
  * Directional key light with the positional-side fields at sensible defaults, so the
@@ -64,9 +75,7 @@ export const AMETHYST_TIDE: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#140c3f",
-    baseB: "#4f8fe8",
-    accent: "#e84fd0",
+    ...evenRamp(["#140c3f", "#4f8fe8", "#e84fd0"]),
     saturation: 0.95,
     exposure: 1.05,
     contrast: 1.08,
@@ -94,9 +103,7 @@ export const WARM_IVORY: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#241a10",
-    baseB: "#b5a37d",
-    accent: "#f0e8cf",
+    ...evenRamp(["#241a10", "#b5a37d", "#f0e8cf"]),
     saturation: 0.82,
     exposure: 1.12,
     contrast: 1.1,
@@ -124,9 +131,7 @@ export const INNER_FIRE: Look = {
     emissionColor: "#fff3c4",
   },
   palette: {
-    baseA: "#140602",
-    baseB: "#703a10",
-    accent: "#ffd584",
+    ...evenRamp(["#140602", "#703a10", "#ffd584"]),
     saturation: 0.85,
     exposure: 0.95,
     contrast: 1.2,
@@ -154,9 +159,7 @@ export const MOSSY_BACKLIGHT: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#1a1505",
-    baseB: "#5c6e22",
-    accent: "#d3e26b",
+    ...evenRamp(["#1a1505", "#5c6e22", "#d3e26b"]),
     saturation: 1.0,
     exposure: 1.25,
     contrast: 1.1,
@@ -184,9 +187,7 @@ export const WET_JADE: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#07140c",
-    baseB: "#256b46",
-    accent: "#8fd470",
+    ...evenRamp(["#07140c", "#256b46", "#8fd470"]),
     saturation: 0.95,
     exposure: 1.05,
     contrast: 1.1,
@@ -225,9 +226,7 @@ export const DESERT_SUN: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#1c1208",
-    baseB: "#c89a5e",
-    accent: "#f7e6c4",
+    ...evenRamp(["#1c1208", "#c89a5e", "#f7e6c4"]),
     saturation: 0.9,
     exposure: 0.95,
     contrast: 1.15,
@@ -264,9 +263,7 @@ export const GILDED_HAZE: Look = {
     emissionColor: "#000000",
   },
   palette: {
-    baseA: "#221318",
-    baseB: "#c99a8a",
-    accent: "#ffd9b0",
+    ...evenRamp(["#221318", "#c99a8a", "#ffd9b0"]),
     saturation: 0.9,
     exposure: 1.0,
     contrast: 1.1,
@@ -303,9 +300,7 @@ export const EMBER_STORM: Look = {
     emissionColor: "#ff9540",
   },
   palette: {
-    baseA: "#0b0302",
-    baseB: "#38130a",
-    accent: "#e8a05a",
+    ...evenRamp(["#0b0302", "#38130a", "#e8a05a"]),
     saturation: 0.8,
     exposure: 0.95,
     contrast: 1.18,
@@ -342,9 +337,7 @@ export const MOONLIT_LANTERNS: Look = {
     emissionColor: "#ffc97f",
   },
   palette: {
-    baseA: "#050a14",
-    baseB: "#1c3a55",
-    accent: "#9fd0ff",
+    ...evenRamp(["#050a14", "#1c3a55", "#9fd0ff"]),
     saturation: 1.0,
     exposure: 1.2,
     contrast: 1.12,
