@@ -90,4 +90,38 @@ const state = controller.state;
       @update:model-value="controller.setGlowColor($event)"
     />
   </div>
+
+  <div class="mt-3 border-t border-white/10 pt-3">
+    <p class="pb-1 text-xs font-semibold text-muted-color">Bloom</p>
+    <ParamSlider
+      label="Strength"
+      :min="0"
+      :max="1.4"
+      :step="0.01"
+      :model-value="state.bloomStrength"
+      description="Strength of the soft halo that bleeds from bright areas."
+      testid="param-bloom-strength"
+      @update:model-value="controller.setBloomStrength($event)"
+    />
+    <ParamSlider
+      label="Radius"
+      :min="0"
+      :max="1"
+      :step="0.01"
+      :model-value="state.bloomRadius"
+      description="How far the bloom halo spreads from its source."
+      testid="param-bloom-radius"
+      @update:model-value="controller.setBloomRadius($event)"
+    />
+    <ParamSlider
+      label="Cutoff"
+      :min="0"
+      :max="1.5"
+      :step="0.01"
+      :model-value="state.bloomThreshold"
+      description="Brightness threshold above which pixels start to bloom."
+      testid="param-bloom-threshold"
+      @update:model-value="controller.setBloomThreshold($event)"
+    />
+  </div>
 </template>

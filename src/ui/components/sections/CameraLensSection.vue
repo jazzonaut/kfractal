@@ -1,10 +1,4 @@
 <script setup lang="ts">
-import ToggleSwitch from "primevue/toggleswitch";
-import {
-  CONTROL_SENSITIVITY_MAX,
-  CONTROL_SENSITIVITY_MIN,
-  CONTROL_SENSITIVITY_STEP,
-} from "../../../config/constants";
 import ParamSlider from "../ParamSlider.vue";
 import { useController } from "../../composables/use-controller";
 
@@ -43,45 +37,57 @@ const state = controller.state;
     testid="param-focus"
     @update:model-value="controller.setFocusDistance($event)"
   />
-  <ParamSlider
-    label="Fringe"
-    :min="0"
-    :max="0.025"
-    :step="0.0005"
-    :model-value="state.chromaticAberration"
-    description="Chromatic aberration - splits colour toward the frame edges like a real lens."
-    testid="param-fringe"
-    @update:model-value="controller.setChromaticAberration($event)"
-  />
-  <ParamSlider
-    label="Distortion"
-    :min="-1"
-    :max="1"
-    :step="0.005"
-    :model-value="state.lensDistortion"
-    description="Lens warping: barrel (negative) bulges outward, pincushion (positive) pinches inward."
-    testid="param-distortion"
-    @update:model-value="controller.setPostFxParam('distortion', $event)"
-  />
-  <ParamSlider
-    label="Sensitivity"
-    :min="CONTROL_SENSITIVITY_MIN"
-    :max="CONTROL_SENSITIVITY_MAX"
-    :step="CONTROL_SENSITIVITY_STEP"
-    :model-value="state.controlSensitivity"
-    description="How far the camera responds to a drag, wheel, or pinch - scales orbit, pan, roll, and zoom together, for both mouse and touch. 1 is the default feel."
-    testid="param-control-sensitivity"
-    @update:model-value="controller.setControlSensitivity($event)"
-  />
-  <label class="flex cursor-pointer items-center justify-between pt-1 text-muted-color">
-    <span>
-      Deep-zoom dive
-      <span class="block text-xs">Infinite zoom into surface detail (off: fly through it)</span>
-    </span>
-    <ToggleSwitch
-      :model-value="state.diveEnabled"
-      data-testid="dive-enabled-toggle"
-      @update:model-value="controller.setDiveEnabled($event)"
+  <div class="mt-3 border-t border-white/10 pt-3">
+    <p class="pb-1 text-xs font-semibold text-muted-color">Lens FX</p>
+    <ParamSlider
+      label="Fringe"
+      :min="0"
+      :max="0.025"
+      :step="0.0005"
+      :model-value="state.chromaticAberration"
+      description="Chromatic aberration - splits colour toward the frame edges like a real lens."
+      testid="param-fringe"
+      @update:model-value="controller.setChromaticAberration($event)"
     />
-  </label>
+    <ParamSlider
+      label="Distortion"
+      :min="-1"
+      :max="1"
+      :step="0.005"
+      :model-value="state.lensDistortion"
+      description="Lens warping: barrel (negative) bulges outward, pincushion (positive) pinches inward."
+      testid="param-distortion"
+      @update:model-value="controller.setPostFxParam('distortion', $event)"
+    />
+    <ParamSlider
+      label="Vignette"
+      :min="0"
+      :max="1"
+      :step="0.01"
+      :model-value="state.vignetteStrength"
+      description="Strength of the darkening toward the frame corners."
+      testid="param-vignette"
+      @update:model-value="controller.setPostFxParam('vignetteStrength', $event)"
+    />
+    <ParamSlider
+      label="Vignette edge"
+      :min="0.05"
+      :max="1"
+      :step="0.01"
+      :model-value="state.vignetteSoftness"
+      description="Softness of the vignette falloff - low is a hard edge, high fades gradually."
+      testid="param-vignette-softness"
+      @update:model-value="controller.setPostFxParam('vignetteSoftness', $event)"
+    />
+    <ParamSlider
+      label="Grain"
+      :min="0"
+      :max="0.25"
+      :step="0.005"
+      :model-value="state.grainStrength"
+      description="Amount of film-grain noise added to the final image."
+      testid="param-grain"
+      @update:model-value="controller.setPostFxParam('grainStrength', $event)"
+    />
+  </div>
 </template>

@@ -8,6 +8,7 @@ import Button from "primevue/button";
 import LibraryPicker from "./LibraryPicker.vue";
 import PresetActions from "./PresetActions.vue";
 import CameraLensSection from "./sections/CameraLensSection.vue";
+import NavigationSection from "./sections/NavigationSection.vue";
 import EffectsSection from "./sections/EffectsSection.vue";
 import GrowthSection from "./sections/GrowthSection.vue";
 import LightingSection from "./sections/LightingSection.vue";
@@ -32,6 +33,7 @@ watch(collapsed, (value) => controller.setViewportRightInset(value ? 0 : PANEL_W
 // Section registry: a future effect is one entry here plus its section component.
 const sections = computed(() => [
   { id: "camera", title: "Camera & Lens", component: CameraLensSection },
+  { id: "navigation", title: "Navigation", component: NavigationSection },
   { id: "palette", title: "Palette", component: PaletteSection },
   { id: "lighting", title: "Lighting", component: LightingSection },
   { id: "grade", title: "Grade", component: GradeSection },
