@@ -145,8 +145,9 @@ export class CameraControls {
     // Centroid translation pans, matching the mouse pan's raw screen-pixel deltas.
     this.stage.pan((cx - this.pinchCx) * s, (cy - this.pinchCy) * s);
     // Twist between the fingers rolls; wrap the delta so crossing ±π doesn't fling the roll.
+    // Negated so the view rolls *with* the fingers (twist clockwise -> horizon tips clockwise).
     const dAngle = angle - this.pinchAngle;
-    this.stage.rollBy(Math.atan2(Math.sin(dAngle), Math.cos(dAngle)) * s);
+    this.stage.rollBy(-Math.atan2(Math.sin(dAngle), Math.cos(dAngle)) * s);
     this.pinchDist = dist;
     this.pinchAngle = angle;
     this.pinchCx = cx;

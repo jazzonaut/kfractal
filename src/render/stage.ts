@@ -50,8 +50,16 @@ export class Stage {
   }
 
   orbit(deltaYaw: number, deltaPitch: number): void {
-    this.yaw += deltaYaw;
-    this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + deltaPitch));
+    // The drag arrives in screen axes (horizontal -> yaw, vertical -> pitch). When the view is
+    // rolled, those screen axes no longer line up with the yaw/pitch frame, so rotate the drag
+    // back by the roll first -- then a horizontal swipe orbits about the *tilted* vertical and
+    // the controls track the horizon instead of the world axes. (roll == 0 is the identity.)
+    const c = Math.cos(this.roll);
+    const s = Math.sin(this.roll);
+    const dYaw = deltaYaw * c - deltaPitch * s;
+    const dPitch = deltaYaw * s + deltaPitch * c;
+    this.yaw += dYaw;
+    this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + dPitch));
     this.applyOrbit();
   }
 
