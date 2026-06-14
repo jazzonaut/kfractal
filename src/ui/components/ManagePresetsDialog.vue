@@ -117,7 +117,7 @@ function formatDate(iso: string): string {
     modal
     header="My library"
     :draggable="false"
-    class="w-[42rem]"
+    class="w-[42rem] max-w-[calc(100vw-2rem)]"
     data-testid="preset-manage-dialog"
     @update:visible="emit('update:visible', $event)"
   >
