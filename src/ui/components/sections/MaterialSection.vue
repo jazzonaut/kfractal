@@ -49,6 +49,26 @@ const state = controller.state;
     @update:model-value="controller.setMaterialParam('ior', $event)"
   />
   <ParamSlider
+    label="Refraction"
+    :min="0"
+    :max="1"
+    :step="0.01"
+    :model-value="state.refraction"
+    description="Glass transmission - light bends through the surface by the IOR instead of scattering. 0 is opaque. (Path-trace render only.)"
+    testid="param-refraction"
+    @update:model-value="controller.setMaterialParam('refraction', $event)"
+  />
+  <ParamSlider
+    label="Dispersion"
+    :min="0"
+    :max="0.3"
+    :step="0.005"
+    :model-value="state.dispersion"
+    description="Prismatic spread - splits refracted light into colours by bending each wavelength differently. Needs Refraction above 0."
+    testid="param-dispersion"
+    @update:model-value="controller.setMaterialParam('dispersion', $event)"
+  />
+  <ParamSlider
     label="Emission"
     :min="0"
     :max="8"

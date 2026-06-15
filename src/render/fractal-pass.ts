@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import { sampler, texture, uv, uniform, wgslFn } from "three/tsl";
+import { makeBlueNoiseTexture } from "./blue-noise";
 import { buildRenderSampleWGSL } from "./shaders/pathtrace";
 import {
   ENV_H,
@@ -11,7 +12,7 @@ import {
 } from "./environment";
 import { FOG_DEFAULTS } from "../fractal/effects-defaults";
 import { FORMULAS, getFormula } from "../fractal/registry";
-import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
+import { MAX_LIGHTS, MAX_PALETTE_STOPS, glassParams, sortStopsByPosition } from "../fractal/types";
 import { defaultWarp, packWarpAxes, warpConstLipschitz } from "../fractal/warp";
 import type { EnvironmentData } from "./environment";
 import type {
@@ -90,6 +91,8 @@ export interface SampleUniforms {
   readonly lens: any;
   /** roughness, specular, translucency, ior. */
   readonly matP: any;
+  /** refraction, dispersion, spare, spare. */
+  readonly matQ: any;
   /** emission rgb (linear), strength. */
   readonly emissionP: any;
   /** trap scale, trap power. */
@@ -182,9 +185,14 @@ export class FractalPass {
   private readonly envTexNode: any;
   private sky: SkySettings | null = null;
   private envData: EnvironmentData | null = null;
+  /** Static blue-noise dither mask for screen-space sample decorrelation (see blue-noise.ts).
+   * Built once and never swapped, mirroring the env atlas's single-binding-layout rule. */
+  private readonly blueNoiseTexture = makeBlueNoiseTexture();
+  private readonly blueNoiseTexNode: any;
 
   constructor(initialFormula: FractalFormulaId) {
     this.envTexNode = texture(this.envRadianceTexture);
+    this.blueNoiseTexNode = texture(this.blueNoiseTexture);
     this.uniforms = {
       resolution: uniform(new THREE.Vector2(window.innerWidth, window.innerHeight)),
       camPos: uniform(new THREE.Vector3()),
@@ -213,6 +221,9 @@ export class FractalPass {
       lightMeta: uniform(new THREE.Vector4(1, 0.003, 0, 0)),
       lens: uniform(new THREE.Vector2(0, 5)),
       matP: uniform(new THREE.Vector4(0.55, 0.5, 0, 1.45)),
+      // refraction, dispersion, spare, spare. Defaults to 0 (no glass lobe) so the
+      // pre-refraction image is reproduced exactly.
+      matQ: uniform(new THREE.Vector4(0, 0, 0, 0)),
       emissionP: uniform(new THREE.Vector4(0, 0, 0, 0)),
       trapMap: uniform(new THREE.Vector2(1, 0.35)),
       // Default 3-stop ramp (matches the pre-multi-stop colA/colB/colC); applyLook overwrites it.
@@ -301,6 +312,7 @@ export class FractalPass {
       lightMeta: u.lightMeta,
       lens: u.lens,
       matP: u.matP,
+      matQ: u.matQ,
       emissionP: u.emissionP,
       trapMap: u.trapMap,
       paletteStop0: u.paletteStop0,
@@ -337,6 +349,7 @@ export class FractalPass {
       warpQ: u.warpQ,
       envTex: this.envTexNode,
       envTexSampler: sampler(this.envTexNode),
+      blueNoiseTex: this.blueNoiseTexNode,
     });
     material.depthTest = false;
     material.depthWrite = false;
@@ -421,6 +434,8 @@ export class FractalPass {
 
     const m = look.material;
     u.matP.value.set(m.roughness, m.specular, m.translucency, m.ior);
+    const glass = glassParams(m);
+    u.matQ.value.set(glass.refraction, glass.dispersion, 0, 0);
     const e = linearColor(m.emissionColor);
     u.emissionP.value.set(e.x, e.y, e.z, m.emissionStrength);
 

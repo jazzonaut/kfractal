@@ -43,6 +43,8 @@ export type MaterialParamKey =
   | "specular"
   | "translucency"
   | "ior"
+  | "refraction"
+  | "dispersion"
   | "emissionStrength";
 
 export type LightParamKey = "intensity" | "size" | "falloff";
@@ -161,6 +163,8 @@ export interface WorkstationState {
   specular: number;
   translucency: number;
   ior: number;
+  refraction: number;
+  dispersion: number;
   emissionStrength: number;
   /** User lights (1..MAX_LIGHTS); lights[0] is the traditional key light. */
   lights: LightSource[];

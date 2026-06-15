@@ -76,7 +76,7 @@ function onExport(): void {
       v-if="state.rendering && !isCompact"
       :value="progress"
       :show-value="false"
-      class="h-1.5 w-40"
+      class="render-progress h-1.5 w-40"
       data-testid="render-progress"
     />
     <span v-if="!isCompact" class="text-muted-color" data-testid="resolution-readout">
@@ -131,3 +131,13 @@ function onExport(): void {
 
   <ExportDialog v-model:visible="exportOpen" />
 </template>
+
+<style scoped>
+/* The bar reports discrete sample milestones (presented every 4-8 samples), so Aura's default
+   1s width ease adds no value. Worse: pressing Render on a converged (100%) run resets the value
+   to 0, and the ease animates the bar leftward over ~1s while samples are already climbing back
+   up — the two meet partway and read as the bar "unwinding" then resuming mid-way. Snap instead. */
+.render-progress :deep(.p-progressbar-value) {
+  transition: none;
+}
+</style>

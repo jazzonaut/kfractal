@@ -186,4 +186,21 @@ describe("clampLookToEnvironments", () => {
     const envId = clampLookToEnvironments(badLook()).sky.envId;
     expect(ENVIRONMENTS.some((env) => env.id === envId)).toBe(true);
   });
+
+  it("leaves the glass fields absent on pre-refraction looks", () => {
+    // Curated looks predate the refraction split and omit the optional fields; clamping must
+    // not materialize them, or the canonical-content check would see a silent alteration.
+    const m = clampLookToEnvironments(clone(LOOKS[0]!) as Look).material;
+    expect(m.refraction).toBeUndefined();
+    expect(m.dispersion).toBeUndefined();
+  });
+
+  it("clamps out-of-range glass fields in place when present", () => {
+    const look = clone(LOOKS[0]!) as Look;
+    look.material.refraction = 5;
+    look.material.dispersion = -1;
+    const m = clampLookToEnvironments(look).material;
+    expect(m.refraction).toBe(1);
+    expect(m.dispersion).toBe(0);
+  });
 });

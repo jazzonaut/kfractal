@@ -217,10 +217,13 @@ export function createController(deps: {
     setMaterialParam: (key, value) => {
       state[key] = value;
       const matP = fractal.uniforms.matP.value;
+      const matQ = fractal.uniforms.matQ.value;
       if (key === "roughness") matP.x = value;
       else if (key === "specular") matP.y = value;
       else if (key === "translucency") matP.z = value;
       else if (key === "ior") matP.w = value;
+      else if (key === "refraction") matQ.x = value;
+      else if (key === "dispersion") matQ.y = value;
       else fractal.uniforms.emissionP.value.w = value;
       resetAccumulation();
     },

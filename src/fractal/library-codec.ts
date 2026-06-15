@@ -109,6 +109,11 @@ export const lookSchema = z.object({
     specular: finite,
     translucency: finite,
     ior: finite,
+    // Added after the v4 split; optional (like the fog pocket fields) so a parsed pre-refraction
+    // save keeps the field absent, matching the curated looks. Defaulted to 0 at every read site
+    // via glassParams(), and clamped in place below only when present.
+    refraction: finite.optional(),
+    dispersion: finite.optional(),
     emissionStrength: finite,
     emissionColor: hexColor,
   }),
@@ -335,6 +340,10 @@ export function clampLookToEnvironments(look: Look): Look {
     ior: clamp(m.ior, 1, 2.5),
     emissionStrength: clamp(m.emissionStrength, 0, 8),
   };
+  // Glass fields are optional (added after the v4 split); clamp in place only when present so
+  // an absent field stays absent and pre-refraction curated looks pass through unaltered.
+  if (material.refraction !== undefined) material.refraction = clamp(material.refraction, 0, 1);
+  if (material.dispersion !== undefined) material.dispersion = clamp(material.dispersion, 0, 0.3);
   const lens = {
     aperture: clamp(look.lens.aperture, 0, 0.14),
     chromaticAberration: clamp(look.lens.chromaticAberration, 0, 0.025),

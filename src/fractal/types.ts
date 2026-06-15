@@ -102,10 +102,23 @@ export interface MaterialSettings {
   specular: number;
   /** Diffuse transmission probability 0..1 (wax/foam look). */
   translucency: number;
-  /** Index of refraction; sets the fresnel F0 of the specular lobe. */
+  /** Index of refraction; sets the fresnel F0 of the specular lobe and bends the glass lobe. */
   ior: number;
+  /** Specular (glass) transmission weight 0..1. Absent or 0 = opaque (the default). */
+  refraction?: number;
+  /** Per-channel IOR spread driving chromatic dispersion through the glass lobe (0 = none). */
+  dispersion?: number;
   emissionStrength: number;
   readonly emissionColor: string;
+}
+
+/**
+ * The glass-lobe fields default to 0 (opaque) when absent. Every look-application path reads
+ * them through here so they default identically - one site forgetting the default would feed
+ * `undefined` into the uniform (→ NaN), silently killing the translucency branch downstream.
+ */
+export function glassParams(m: MaterialSettings): { refraction: number; dispersion: number } {
+  return { refraction: m.refraction ?? 0, dispersion: m.dispersion ?? 0 };
 }
 
 /**

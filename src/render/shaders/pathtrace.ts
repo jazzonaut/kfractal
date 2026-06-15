@@ -1,3 +1,4 @@
+import { BLUE_NOISE_SIZE } from "../blue-noise";
 import { ENV_ATLAS_H, ENV_H, GRID_H, GRID_W } from "../environment";
 
 /**
@@ -129,6 +130,7 @@ fn ${RENDER_SAMPLE_FN}(
   lightMeta: vec4<f32>,
   lens: vec2<f32>,
   matP: vec4<f32>,
+  matQ: vec4<f32>,
   emissionP: vec4<f32>,
   trapMap: vec2<f32>,
   envP: vec4<f32>,
@@ -156,6 +158,7 @@ fn ${RENDER_SAMPLE_FN}(
   warpQ: vec4<f32>,
   envTex: texture_2d<f32>,
   envTexSampler: sampler,
+  blueNoiseTex: texture_2d<f32>,
   paletteStop0: vec4<f32>,
   paletteStop1: vec4<f32>,
   paletteStop2: vec4<f32>,
@@ -167,7 +170,12 @@ fn ${RENDER_SAMPLE_FN}(
   paletteMeta: vec4<f32>
 ) -> vec4<f32> {
   let px = vec2<u32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * resolution);
-  gPixelSeed = pcgHash(px.x ^ pcgHash(px.y));
+  // Blue-noise dither value for this pixel: the Cranley-Patterson rotation offset that
+  // decorrelates the (pixel-shared) Sobol sequence below. A spatially-blue offset makes the
+  // residual error land as blue noise in screen space. textureLoad (no sampler, no filtering)
+  // fetches one texel per pixel; the tile wraps via the explicit modulo and the offset is
+  // stable across the accumulation run.
+  gBlueNoise = textureLoad(blueNoiseTex, px % vec2<u32>(${BLUE_NOISE_SIZE}u), 0).xy;
   gSampleIdx = u32(frame);
   gSobolDim = 0u;
 
@@ -208,6 +216,7 @@ fn ${RENDER_SAMPLE_FN}(
     gLightWeightSum = gLightWeightSum + wgt;
   }
   gMatP = matP;
+  gMatQ = matQ;
   gEmission = emissionP;
   gTrapMap = trapMap;
   gStops = array<vec4<f32>, 8>(
@@ -294,6 +303,9 @@ struct Material {
   specular: f32,
   translucency: f32,
   ior: f32,
+  // Specular (glass) transmission weight and its per-channel IOR spread for dispersion.
+  refraction: f32,
+  dispersion: f32,
   emission: vec3<f32>,
 };
 
@@ -324,6 +336,8 @@ var<private> gLightWeightSum: f32;
 var<private> gLightLive: i32;
 var<private> gAmbient: f32;
 var<private> gMatP: vec4<f32>;
+// matQ: refraction (specular transmission weight), dispersion (per-channel IOR spread), spare, spare.
+var<private> gMatQ: vec4<f32>;
 var<private> gEmission: vec4<f32>;
 var<private> gTrapMap: vec2<f32>;
 // Orbit-trap palette ramp: up to MAX_PALETTE_STOPS stops as (linear rgb, position), sorted by
@@ -356,7 +370,7 @@ var<private> gDiveRZ: vec3<f32>;
 var<private> gPixelEps: f32;
 var<private> gEpsFloor: f32;
 var<private> gNormScale: f32;
-var<private> gPixelSeed: u32;
+var<private> gBlueNoise: vec2<f32>;
 var<private> gSampleIdx: u32;
 var<private> gSobolDim: u32;
 // Special effects (all opt-in; zero strengths reproduce the effect-free image).
@@ -425,12 +439,17 @@ fn clampIndirect(c: vec3<f32>, bounce: i32) -> vec3<f32> {
   return min(c, vec3<f32>(INDIRECT_CLAMP));
 }
 
-// --- Sampler: shuffled, hash-based Owen-scrambled Sobol (0,2)-sequence (Burley 2020).
-// Each rndf()/rnd2f() call is one padded dimension group: the accumulation sample index
-// is shuffled and the Sobol coordinates Owen-scrambled with seeds hashed from
-// (pixel, dimension), so every 1D/2D projection the integrator consumes is its own
-// decorrelated low-discrepancy point set across the run. Stratification is exact for
-// power-of-two sample caps and degrades gracefully otherwise.
+// --- Sampler: shuffled, hash-based Owen-scrambled Sobol (0,2)-sequence (Burley 2020),
+// shared across all pixels and decorrelated per pixel by a blue-noise Cranley-Patterson
+// rotation. Each rndf()/rnd2f() call is one padded dimension group: the accumulation sample
+// index is shuffled and the Sobol coordinates Owen-scrambled with seeds hashed from the
+// dimension only (NOT the pixel), so every pixel walks the same low-discrepancy point set.
+// The per-pixel blue-noise offset then toroidally rotates that point - a measure-preserving
+// shift that keeps the estimator unbiased and per-pixel convergence intact, while pushing the
+// screen-space error spectrum to blue. This is the additive-rotation variant: it distributes
+// error as blue noise in screen space in the spirit of Heitz & Belcour 2019, but with a plain
+// CP rotation rather than that paper's per-pixel scrambling/ranking key (so it does not claim
+// to preserve the digital net's exact stratification - only its uniformity and unbiasedness).
 
 fn pcgHash(vIn: u32) -> u32 {
   let state = vIn * 747796405u + 2891336453u;
@@ -471,21 +490,30 @@ fn sobolToFloat(v: u32) -> f32 {
   return f32(v >> 8u) * (1.0 / 16777216.0);
 }
 
+// The blue-noise offset advances along the R2 additive (plastic-number) sequence per
+// dimension so successive dimensions stay mutually decorrelated under the shared rotation.
+const R2_A1: f32 = 0.7548776662466927;
+const R2_A2: f32 = 0.5698402909980532;
+
 fn rndf() -> f32 {
-  let seed = pcgHash(gPixelSeed ^ (gSobolDim * 0x9e3779b9u));
+  let d = gSobolDim;
+  let seed = pcgHash(d * 0x9e3779b9u);
   gSobolDim = gSobolDim + 1u;
   let shuffled = owenScramble(gSampleIdx, pcgHash(seed ^ 0x68bc21ebu));
-  return sobolToFloat(owenScramble(reverseBits(shuffled), pcgHash(seed ^ 0x02e5be93u)));
+  let s = sobolToFloat(owenScramble(reverseBits(shuffled), pcgHash(seed ^ 0x02e5be93u)));
+  return fract(s + gBlueNoise.x + f32(d) * R2_A1);
 }
 
 fn rnd2f() -> vec2<f32> {
-  let seed = pcgHash(gPixelSeed ^ (gSobolDim * 0x9e3779b9u));
+  let d = gSobolDim;
+  let seed = pcgHash(d * 0x9e3779b9u);
   gSobolDim = gSobolDim + 1u;
   let shuffled = owenScramble(gSampleIdx, pcgHash(seed ^ 0x68bc21ebu));
-  return vec2<f32>(
+  let s = vec2<f32>(
     sobolToFloat(owenScramble(reverseBits(shuffled), pcgHash(seed ^ 0x02e5be93u))),
     sobolToFloat(owenScramble(sobolDim1(shuffled), pcgHash(seed ^ 0x967a889bu))),
   );
+  return fract(s + gBlueNoise + vec2<f32>(f32(d) * R2_A1, f32(d) * R2_A2));
 }
 
 // Presets store surfaceEpsilon tuned against this reference; the ratio scales the
@@ -677,7 +705,7 @@ fn surfaceMaterial(trap: f32, pos: vec3<f32>) -> Material {
     albedo = mix(albedo, gGrowthC.rgb, gm * gGrowthQ.y);
     emission = emission + gGrowthC.rgb * (gGrowthQ.z * gm);
   }
-  return Material(albedo, rough, gMatP.y, gMatP.z, gMatP.w, emission);
+  return Material(albedo, rough, gMatP.y, gMatP.z, gMatP.w, gMatQ.x, gMatQ.y, emission);
 }
 
 // Near-black studio fill: the references live on dark negative space (ADR-0003 look).
@@ -880,8 +908,11 @@ fn evalBRDF(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, m: Material) -> vec3<f32> 
   let shininess = 2.0 / (r2 * r2) - 2.0;
   let spec = m.specular * fres * (shininess + 2.0) / 8.0 * pow(ndh, shininess);
   // Thin-film tints only the specular lobe; preview and NEE share this kernel so the
-  // iridescent response matches across modes automatically.
-  return (m.albedo + spec * thinFilmTint(vdh)) * ndl;
+  // iridescent response matches across modes automatically. The diffuse albedo lobe is faded
+  // out by refraction: a glass surface transmits/reflects its direct light rather than
+  // scattering it diffusely, so without this a near-pure-glass look (refraction -> 1) would
+  // pick up a full Lambertian direct response from every key light and read as a milky blob.
+  return (m.albedo * (1.0 - m.refraction) + spec * thinFilmTint(vdh)) * ndl;
 }
 
 // Shadow rays for directional lights (and the sky stand-ins) march this far before
@@ -1570,18 +1601,25 @@ fn pathTrace(
         if (vis > 0.0) {
           let pdfCos = ndl / PI;
           let w = es.w / (es.w + pdfCos);
-          let f = m.albedo * (ndl / PI);
+          // Diffuse lobe only, faded by refraction (matches evalBRDF): glass takes its env
+          // response through the refraction/reflection bounce rays, not this diffuse draw.
+          let f = m.albedo * (1.0 - m.refraction) * (ndl / PI);
           let nee = throughput * envMapRadiance(l, envTex, envTexSampler) * f * (w / es.w);
           radiance = radiance + clampIndirect(nee, b);
         }
       }
     }
 
-    // Bounce: fresnel-weighted specular vs transmission vs diffuse.
+    // Bounce: fresnel-weighted specular reflection vs glass refraction vs diffuse
+    // transmission vs diffuse. The thresholds partition the non-reflected mass (1 - pSpec)
+    // by refraction first, then translucency; with refraction == 0 they collapse exactly to
+    // the legacy specular/translucency/diffuse split (so existing looks render unchanged).
     let cosV = max(dot(n, -d), 0.0);
     let f0 = f0FromIor(m.ior);
     let fres = f0 + (1.0 - f0) * pow(1.0 - cosV, 5.0);
     let pSpec = clamp(m.specular * fres, 0.0, 0.9);
+    let pRefr = pSpec + (1.0 - pSpec) * m.refraction;
+    let pTrans = pRefr + (1.0 - pSpec) * (1.0 - m.refraction) * m.translucency;
     let u = rndf();
     let off = hitEps(h.t) * 3.0;
     if (u < pSpec) {
@@ -1595,7 +1633,46 @@ fn pathTrace(
       d = refl;
       o = h.pos + n * off;
       prevDiffuse = false;
-    } else if (u < pSpec + (1.0 - pSpec) * m.translucency) {
+    } else if (u < pRefr) {
+      // Specular dielectric refraction. Single-bend surface model: the fractal march does
+      // not track the solid interior, so we refract once and continue (the diffuse
+      // transmission lobe makes the same approximation). Hero-channel dispersion: pick one
+      // of R/G/B, refract with its own IOR, and tint by 3x that basis so the three channels
+      // average to white - the path then carries a single wavelength's contribution. With
+      // dispersion off the three IORs are identical, so the split would only add chroma
+      // variance for no benefit; carry white (ch = mid) and skip the wavelength pick.
+      var ch = 1.0;
+      var basis = vec3<f32>(1.0);
+      if (m.dispersion > 0.0) {
+        let hero = rndf();
+        if (hero >= 0.6666667) {
+          ch = 2.0;
+          basis = vec3<f32>(0.0, 0.0, 3.0);
+        } else if (hero >= 0.3333333) {
+          ch = 1.0;
+          basis = vec3<f32>(0.0, 3.0, 0.0);
+        } else {
+          ch = 0.0;
+          basis = vec3<f32>(3.0, 0.0, 0.0);
+        }
+      }
+      // Cauchy-like ordering: red (ch 0) has the lowest IOR and bends least, blue the most.
+      let iorCh = max(m.ior + (ch - 1.0) * m.dispersion, 1.0);
+      let nl = select(-n, n, dot(d, n) < 0.0);
+      var rd = refract(d, nl, 1.0 / iorCh);
+      if (dot(rd, rd) < 1e-8) {
+        rd = reflect(d, nl);
+      }
+      // Roughness frosts the refraction, matching the reflection lobe's blur.
+      let refr = normalize(mix(rd, cosineDir(-nl), m.roughness * m.roughness));
+      // The 3x single-channel basis raises per-path radiance, so in bright regions the
+      // downstream INDIRECT_CLAMP can bite a dispersed path harder than an achromatic one,
+      // biasing dispersion brightness slightly down. Acceptable for the firefly tradeoff.
+      throughput = throughput * basis;
+      d = refr;
+      o = h.pos - nl * off;
+      prevDiffuse = false;
+    } else if (u < pTrans) {
       // Diffuse transmission: carry tinted light through thin structure.
       throughput = throughput * m.albedo;
       d = cosineDir(-n);

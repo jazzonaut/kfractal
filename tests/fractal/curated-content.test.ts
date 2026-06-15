@@ -11,6 +11,7 @@ import { defaultEffects } from "../../src/fractal/effects-defaults";
 import { SHAPES } from "../../src/fractal/shapes";
 import { LOOKS } from "../../src/fractal/looks";
 import { PRESETS } from "../../src/fractal/presets";
+import { glassParams } from "../../src/fractal/types";
 
 /**
  * The curated library is the app's source of truth and ships unvalidated at runtime (it is
@@ -63,6 +64,21 @@ describe("curated looks", () => {
   it("every look is already within clamp ranges (no silent alteration on import)", () => {
     for (const look of LOOKS) {
       expect(clampLookToEnvironments(look), `${look.id} unchanged by clamp`).toEqual(look);
+    }
+  });
+
+  it("yields finite glass params for every look (no undefined → NaN into the uniform)", () => {
+    // Regression guard: the curated looks predate the refraction split and omit the optional
+    // fields. Every look-application path reads them through glassParams(); if any site forgot
+    // the default it would feed undefined → NaN into matQ, which silently kills the
+    // translucency branch in the shader. A curated look with the fields absent must default to
+    // exactly 0 here.
+    for (const look of LOOKS) {
+      const g = glassParams(look.material);
+      expect(Number.isFinite(g.refraction), `${look.id} refraction finite`).toBe(true);
+      expect(Number.isFinite(g.dispersion), `${look.id} dispersion finite`).toBe(true);
+      if (look.material.refraction === undefined) expect(g.refraction).toBe(0);
+      if (look.material.dispersion === undefined) expect(g.dispersion).toBe(0);
     }
   });
 });

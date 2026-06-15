@@ -18,6 +18,7 @@ import { SHAPES } from "./shapes";
 import { loadUserLibrary } from "./user-library";
 import { autoQualityDefault } from "../render/preview-quality";
 import { defaultWarp, isWarpOff } from "./warp";
+import { glassParams } from "./types";
 import type {
   EffectsSettings,
   FractalPreset,
@@ -112,6 +113,8 @@ export function createWorkstationState(
     specular: look.material.specular,
     translucency: look.material.translucency,
     ior: look.material.ior,
+    refraction: glassParams(look.material).refraction,
+    dispersion: glassParams(look.material).dispersion,
     emissionStrength: look.material.emissionStrength,
     lights: copyLights(look.lights),
     ambient: look.ambient,
@@ -382,6 +385,9 @@ export function createStateBridge(deps: {
     state.specular = look.material.specular;
     state.translucency = look.material.translucency;
     state.ior = look.material.ior;
+    const glass = glassParams(look.material);
+    state.refraction = glass.refraction;
+    state.dispersion = glass.dispersion;
     state.emissionStrength = look.material.emissionStrength;
     state.lights = copyLights(look.lights);
     state.ambient = look.ambient;
@@ -540,6 +546,8 @@ export function createStateBridge(deps: {
       specular: state.specular,
       translucency: state.translucency,
       ior: state.ior,
+      refraction: state.refraction,
+      dispersion: state.dispersion,
       emissionStrength: state.emissionStrength,
       emissionColor: state.emissionColor,
     },
