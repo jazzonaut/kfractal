@@ -357,12 +357,40 @@ export function createController(deps: {
     setFogParam: (key, value) => {
       if (key === "density") state.fogDensity = value;
       else if (key === "height") state.fogHeight = value;
-      else state.fogAnisotropy = value;
+      else if (key === "anisotropy") state.fogAnisotropy = value;
+      else if (key === "level") state.fogLevel = value;
       fractal.applyEffects(bridge.liveEffects());
       resetAccumulation();
     },
     setFogColor: (hex: string) => {
       state.fogColor = hex;
+      fractal.applyEffects(bridge.liveEffects());
+      resetAccumulation();
+    },
+    setFogShape: (shape) => {
+      state.fogShape = shape;
+      fractal.applyEffects(bridge.liveEffects());
+      resetAccumulation();
+    },
+    setFogPocket: (key, value) => {
+      if (key === "x") state.fogPocketX = value;
+      else if (key === "y") state.fogPocketY = value;
+      else if (key === "z") state.fogPocketZ = value;
+      else if (key === "radius") state.fogPocketRadius = value;
+      else if (key === "edge") state.fogPocketEdge = value;
+      fractal.applyEffects(bridge.liveEffects());
+      resetAccumulation();
+    },
+    placeFogAtFocus: () => {
+      // Centre the pocket straight ahead at the focus distance; offsets clear so it sits
+      // on the thing the camera is focused on. Pocket offsets are in the camera frame.
+      // Clamp to the "Distance" slider's [0, 12] so the stored value and the slider stay
+      // in sync (focusDistance is shape-defined and only validated as finite, so it can
+      // in principle exceed the slider range).
+      state.fogShape = "pocket";
+      state.fogPocketX = 0;
+      state.fogPocketY = 0;
+      state.fogPocketZ = Math.min(12, Math.max(0, state.focusDistance));
       fractal.applyEffects(bridge.liveEffects());
       resetAccumulation();
     },

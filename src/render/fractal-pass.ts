@@ -9,6 +9,7 @@ import {
   makeEnvRadianceTexture,
   preethamSunColor,
 } from "./environment";
+import { FOG_DEFAULTS } from "../fractal/effects-defaults";
 import { FORMULAS, getFormula } from "../fractal/registry";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
 import { defaultWarp, packWarpAxes, warpConstLipschitz } from "../fractal/warp";
@@ -122,6 +123,11 @@ export interface SampleUniforms {
   readonly fogP: any;
   /** Fog tint rgb (linear), in-scatter gain in w. */
   readonly fogC: any;
+  /** Pocket fog centre, resolved to the march frame each frame from the camera-frame
+   * offset; radius in w. */
+  readonly fogPocketC: any;
+  /** Pocket fog: mode (0 layer / 1 pocket) in x, edge softness in y. */
+  readonly fogPocketP: any;
   /** Glow: strength, proximity radius, palette-tint flag (0/1), falloff exponent. */
   readonly glowP: any;
   readonly glowColor: any;
@@ -232,6 +238,15 @@ export class FractalPass {
       // Effects all default off (zero strengths) so the image matches the pre-effects look.
       fogP: uniform(new THREE.Vector4(0, 1.5, 0, 0.4)),
       fogC: uniform(new THREE.Vector4(0.39, 0.55, 0.74, 1)),
+      fogPocketC: uniform(
+        new THREE.Vector4(
+          FOG_DEFAULTS.pocketX,
+          FOG_DEFAULTS.pocketY,
+          FOG_DEFAULTS.pocketZ,
+          FOG_DEFAULTS.pocketRadius,
+        ),
+      ),
+      fogPocketP: uniform(new THREE.Vector4(0, FOG_DEFAULTS.pocketEdge, 0, 0)),
       glowP: uniform(new THREE.Vector4(0, 0.25, 1, 2)),
       glowColor: uniform(linearColor("#ffd9a0")),
       fxA: uniform(new THREE.Vector4(0, 0.3, 0, 12)),
@@ -309,6 +324,8 @@ export class FractalPass {
       diveRZ: u.diveRZ,
       fogP: u.fogP,
       fogC: u.fogC,
+      fogPocketC: u.fogPocketC,
+      fogPocketP: u.fogPocketP,
       glowP: u.glowP,
       glowColor: u.glowColor,
       fxA: u.fxA,
@@ -455,11 +472,34 @@ export class FractalPass {
    */
   applyEffects(fx: EffectsSettings): void {
     const u = this.uniforms;
-    u.fogP.value.set(fx.fog.density, fx.fog.height, 0, fx.fog.anisotropy);
+    u.fogP.value.set(
+      fx.fog.density,
+      fx.fog.height,
+      fx.fog.level ?? FOG_DEFAULTS.level,
+      fx.fog.anisotropy,
+    );
     const fc = linearColor(fx.fog.color);
     // In-scatter gain below 1: physically a lit haze outshines a dark subject, but
     // this app's look lives on dark negative space - keep the atmosphere translucent.
     u.fogC.value.set(fc.x, fc.y, fc.z, 0.35);
+    // Pocket: stash the camera-frame offset + radius, then resolve to a march-frame
+    // centre. The resolve also runs every frame in syncCamera so the pocket tracks the
+    // camera ("fixed to camera"); doing it here too keeps it correct when only a slider
+    // moved and the camera is still.
+    this.fogPocketOffset.set(
+      fx.fog.pocketX ?? FOG_DEFAULTS.pocketX,
+      fx.fog.pocketY ?? FOG_DEFAULTS.pocketY,
+      fx.fog.pocketZ ?? FOG_DEFAULTS.pocketZ,
+    );
+    this.fogPocketRadius = fx.fog.pocketRadius ?? FOG_DEFAULTS.pocketRadius;
+    const shape = fx.fog.shape ?? FOG_DEFAULTS.shape;
+    u.fogPocketP.value.set(
+      shape === "pocket" ? 1 : 0,
+      fx.fog.pocketEdge ?? FOG_DEFAULTS.pocketEdge,
+      0,
+      0,
+    );
+    this.recomputeFogPocketCenter();
     u.glowP.value.set(fx.glow.strength, fx.glow.radius, fx.glow.usePalette ? 1 : 0, 2);
     u.glowColor.value.copy(linearColor(fx.glow.color));
     const s = fx.surface;
@@ -621,6 +661,36 @@ export class FractalPass {
     // camera looks down -Z in view space
     this.uniforms.camFwd.value.set(-e[8], -e[9], -e[10]).normalize();
     this.uniforms.tanHalfFov.value = Math.tan((camera.fov * Math.PI) / 180 / 2);
+    this.recomputeFogPocketCenter();
+  }
+
+  /** Camera-frame pocket offset (right, up, forward) and radius, set by applyEffects. */
+  private readonly fogPocketOffset = new THREE.Vector3(
+    FOG_DEFAULTS.pocketX,
+    FOG_DEFAULTS.pocketY,
+    FOG_DEFAULTS.pocketZ,
+  );
+  private fogPocketRadius = FOG_DEFAULTS.pocketRadius;
+
+  /**
+   * Resolve the camera-frame pocket offset into a march-frame centre (the same frame as
+   * `ro = camPos`) using the live camera basis, so the pocket stays glued to the camera
+   * and re-bases through a dive. Cheap; called per frame from syncCamera and on every
+   * fog-slider change.
+   */
+  private recomputeFogPocketCenter(): void {
+    const u = this.uniforms;
+    const o = this.fogPocketOffset;
+    const p = u.camPos.value;
+    const r = u.camRight.value;
+    const up = u.camUp.value;
+    const f = u.camFwd.value;
+    u.fogPocketC.value.set(
+      p.x + r.x * o.x + up.x * o.y + f.x * o.z,
+      p.y + r.y * o.x + up.y * o.y + f.y * o.z,
+      p.z + r.z * o.x + up.z * o.y + f.z * o.z,
+      this.fogPocketRadius,
+    );
   }
 
   resize(width: number, height: number): void {

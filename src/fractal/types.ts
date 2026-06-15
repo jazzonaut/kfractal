@@ -159,6 +159,9 @@ export interface PaletteSettings {
   bloomThreshold: number;
 }
 
+/** Spatial layout of the fog: an infinite ground slab vs a placeable pocket. */
+export type FogShape = "layer" | "pocket";
+
 /** Path-traced atmosphere: exponential height fog with single-scatter light shafts. */
 export interface FogSettings {
   /** Extinction at the height base, camera-space units. 0 disables fog entirely. */
@@ -168,6 +171,23 @@ export interface FogSettings {
   /** Henyey-Greenstein g, -0.9..0.9; positive scatters forward (shafty). */
   anisotropy: number;
   readonly color: string;
+  /**
+   * "layer" (default) is the classic infinite height slab; "pocket" is a placeable,
+   * camera-fixed soft sphere. Optional so presets/scenes saved before this feature
+   * load as a plain layer.
+   */
+  shape?: FogShape;
+  /** Layer mode: world-Y the slab base sits at (slides the whole layer up/down). */
+  level?: number;
+  /** Pocket centre as an offset from the camera, in the camera frame: right(x), up(y),
+   * forward(z). The pocket stays glued to the camera (re-bases through a dive). */
+  pocketX?: number;
+  pocketY?: number;
+  pocketZ?: number;
+  /** Pocket radius, camera-space units. */
+  pocketRadius?: number;
+  /** Pocket edge softness 0..1: fraction of the radius spent fading density to zero. */
+  pocketEdge?: number;
 }
 
 /** Volumetric aura: rays accumulate emission near the surface during the march. */

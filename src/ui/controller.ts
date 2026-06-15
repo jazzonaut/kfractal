@@ -2,6 +2,7 @@ import type {
   ColorStop,
   FractalFormulaId,
   FractalPreset,
+  FogShape,
   FractalShape,
   GrowthMode,
   LibraryKind,
@@ -54,7 +55,9 @@ export type SkyParamKey =
   | "sunSize"
   | "yaw";
 
-export type FogParamKey = "density" | "height" | "anisotropy";
+export type FogParamKey = "density" | "height" | "anisotropy" | "level";
+
+export type FogPocketKey = "x" | "y" | "z" | "radius" | "edge";
 
 export type GlowParamKey = "strength" | "radius";
 
@@ -185,6 +188,13 @@ export interface WorkstationState {
   fogDensity: number;
   fogHeight: number;
   fogAnisotropy: number;
+  fogShape: FogShape;
+  fogLevel: number;
+  fogPocketX: number;
+  fogPocketY: number;
+  fogPocketZ: number;
+  fogPocketRadius: number;
+  fogPocketEdge: number;
   glowStrength: number;
   glowRadius: number;
   glowUsePalette: boolean;
@@ -303,6 +313,10 @@ export interface Controller {
   setSaturation: (value: number) => void;
   setFogParam: (key: FogParamKey, value: number) => void;
   setFogColor: (hex: string) => void;
+  setFogShape: (shape: FogShape) => void;
+  setFogPocket: (key: FogPocketKey, value: number) => void;
+  /** Drop the fog pocket onto the current focal point (sets pocket mode, centred ahead). */
+  placeFogAtFocus: () => void;
   setGlowParam: (key: GlowParamKey, value: number) => void;
   setGlowColor: (hex: string) => void;
   setGlowPaletteLink: (value: boolean) => void;

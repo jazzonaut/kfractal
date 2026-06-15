@@ -130,7 +130,21 @@ export const lookSchema = z.object({
     bloomThreshold: finite,
   }),
   effects: z.object({
-    fog: z.object({ density: finite, height: finite, anisotropy: finite, color: hexColor }),
+    fog: z.object({
+      density: finite,
+      height: finite,
+      anisotropy: finite,
+      color: hexColor,
+      // Pocket/altitude fields added after the height-fog era; all optional so older
+      // files keep parsing (consumers default them via `?? ...`).
+      shape: z.enum(["layer", "pocket"]).optional(),
+      level: finite.optional(),
+      pocketX: finite.optional(),
+      pocketY: finite.optional(),
+      pocketZ: finite.optional(),
+      pocketRadius: finite.optional(),
+      pocketEdge: finite.optional(),
+    }),
     glow: z.object({ strength: finite, radius: finite, usePalette: z.boolean(), color: hexColor }),
     surface: z.object({
       iridescence: finite,

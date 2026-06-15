@@ -9,6 +9,7 @@ import {
 } from "../config/constants";
 import { EnvironmentManager } from "../render/environment";
 import type { RenderEngine } from "../render/engine";
+import { FOG_DEFAULTS } from "./effects-defaults";
 import { ENVIRONMENTS } from "./environments";
 import { LOOKS } from "./looks";
 import { PRESETS } from "./presets";
@@ -130,6 +131,13 @@ export function createWorkstationState(
     fogDensity: look.effects.fog.density,
     fogHeight: look.effects.fog.height,
     fogAnisotropy: look.effects.fog.anisotropy,
+    fogShape: look.effects.fog.shape ?? FOG_DEFAULTS.shape,
+    fogLevel: look.effects.fog.level ?? FOG_DEFAULTS.level,
+    fogPocketX: look.effects.fog.pocketX ?? FOG_DEFAULTS.pocketX,
+    fogPocketY: look.effects.fog.pocketY ?? FOG_DEFAULTS.pocketY,
+    fogPocketZ: look.effects.fog.pocketZ ?? FOG_DEFAULTS.pocketZ,
+    fogPocketRadius: look.effects.fog.pocketRadius ?? FOG_DEFAULTS.pocketRadius,
+    fogPocketEdge: look.effects.fog.pocketEdge ?? FOG_DEFAULTS.pocketEdge,
     glowStrength: look.effects.glow.strength,
     glowRadius: look.effects.glow.radius,
     glowUsePalette: look.effects.glow.usePalette,
@@ -251,6 +259,13 @@ export function createStateBridge(deps: {
       height: state.fogHeight,
       anisotropy: state.fogAnisotropy,
       color: state.fogColor,
+      shape: state.fogShape,
+      level: state.fogLevel,
+      pocketX: state.fogPocketX,
+      pocketY: state.fogPocketY,
+      pocketZ: state.fogPocketZ,
+      pocketRadius: state.fogPocketRadius,
+      pocketEdge: state.fogPocketEdge,
     },
     glow: {
       strength: state.glowStrength,
@@ -395,6 +410,13 @@ export function createStateBridge(deps: {
     state.fogHeight = fx.fog.height;
     state.fogAnisotropy = fx.fog.anisotropy;
     state.fogColor = fx.fog.color;
+    state.fogShape = fx.fog.shape ?? FOG_DEFAULTS.shape;
+    state.fogLevel = fx.fog.level ?? FOG_DEFAULTS.level;
+    state.fogPocketX = fx.fog.pocketX ?? FOG_DEFAULTS.pocketX;
+    state.fogPocketY = fx.fog.pocketY ?? FOG_DEFAULTS.pocketY;
+    state.fogPocketZ = fx.fog.pocketZ ?? FOG_DEFAULTS.pocketZ;
+    state.fogPocketRadius = fx.fog.pocketRadius ?? FOG_DEFAULTS.pocketRadius;
+    state.fogPocketEdge = fx.fog.pocketEdge ?? FOG_DEFAULTS.pocketEdge;
     state.glowStrength = fx.glow.strength;
     state.glowRadius = fx.glow.radius;
     state.glowUsePalette = fx.glow.usePalette;

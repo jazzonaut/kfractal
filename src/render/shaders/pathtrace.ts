@@ -143,6 +143,8 @@ fn ${RENDER_SAMPLE_FN}(
   diveRZ: vec3<f32>,
   fogP: vec4<f32>,
   fogC: vec4<f32>,
+  fogPocketC: vec4<f32>,
+  fogPocketP: vec4<f32>,
   glowP: vec4<f32>,
   glowColor: vec3<f32>,
   fxA: vec4<f32>,
@@ -232,6 +234,8 @@ fn ${RENDER_SAMPLE_FN}(
   gDiveRZ = diveRZ;
   gFogP = fogP;
   gFogC = fogC;
+  gFogPocketC = fogPocketC;
+  gFogPocketP = fogPocketP;
   gGlowP = glowP;
   gGlowColor = glowColor;
   gFxA = fxA;
@@ -356,6 +360,11 @@ var<private> gSobolDim: u32;
 // fogP: density, height falloff, height base, HG anisotropy. fogC: tint rgb, in-scatter gain.
 var<private> gFogP: vec4<f32>;
 var<private> gFogC: vec4<f32>;
+// fogPocketC: pocket centre xyz (march frame - same frame as ro, resolved on the CPU
+// each frame from the camera-frame offset), radius w. fogPocketP: mode (0 layer / 1
+// pocket) x, edge softness y.
+var<private> gFogPocketC: vec4<f32>;
+var<private> gFogPocketP: vec4<f32>;
 // glowP: strength, proximity radius, palette-tint flag, falloff exponent.
 var<private> gGlowP: vec4<f32>;
 var<private> gGlowColor: vec3<f32>;
@@ -1249,12 +1258,40 @@ fn glowTint(trap: f32) -> vec3<f32> {
   return gGlowColor;
 }
 
+// Placeable fog pocket: a soft sphere centred at gFogPocketC.xyz (march frame, kept glued
+// to the camera by a per-frame CPU resolve) with radius .w. Returns a 0..1 density
+// multiplier - flat 1 inside, smoothstepped to 0 across the outer edge fraction of the
+// radius, and 0 beyond. In layer mode (gFogPocketP.x < 0.5) it is identically 1, so the
+// height slab is untouched.
+//
+// The callers sample this ONCE per segment, at the midpoint, to keep the closed-form
+// optical-depth integral - and the importance sampling that rides on it - exactly as
+// tuned. Two consequences worth knowing, both worse than just "soft edges": (1) the
+// primary segment length is the per-pixel hit depth, so the midpoint slides with depth
+// and the pocket can pop in/out across a silhouette where depth jumps; (2) a pocket that
+// is small relative to its standoff from the segment endpoints can be skipped entirely
+// even when the ray clearly passes through it. Net: best for large, soft pockets in open
+// space. A per-point fix means giving up the closed form (erf or a ray-march).
+fn fogPocketWindow(p: vec3<f32>) -> f32 {
+  if (gFogPocketP.x < 0.5) {
+    return 1.0;
+  }
+  let r = max(gFogPocketC.w, 1.0e-4);
+  let dn = length(p - gFogPocketC.xyz) / r;
+  let edge = clamp(gFogPocketP.y, 0.01, 1.0);
+  return 1.0 - smoothstep(1.0 - edge, 1.0, dn);
+}
+
 // Exponential height fog: sigma_t(p) = density * exp(-falloff * (p.y - base)).
 // Optical depth along o + d*s has the closed form B*(1 - exp(-a*s))/a with a = k*d.y.
+// Pocket mode drops the height falloff (k = 0, uniform density inside the sphere) and
+// scales density by the spherical window sampled at the segment midpoint.
 fn fogOpticalDepth(o: vec3<f32>, d: vec3<f32>, s: f32) -> f32 {
-  let k = gFogP.y;
+  let pocket = gFogPocketP.x > 0.5;
+  let k = select(gFogP.y, 0.0, pocket);
   let a = k * d.y;
-  let b = gFogP.x * exp(clamp(-k * (o.y - gFogP.z), -30.0, 30.0));
+  let win = fogPocketWindow(o + d * (s * 0.5));
+  let b = gFogP.x * win * exp(clamp(-k * (o.y - gFogP.z), -30.0, 30.0));
   if (abs(a) < 1.0e-4) {
     return b * s;
   }
@@ -1269,9 +1306,12 @@ fn fogTransmittance(o: vec3<f32>, d: vec3<f32>, s: f32) -> f32 {
 // Inverse-CDF distance sample in [0, s], pdf(t) proportional to sigma_t(t) * T(t).
 // Normalized to the segment so every draw lands inside it.
 fn sampleFogT(o: vec3<f32>, d: vec3<f32>, s: f32, u: f32) -> f32 {
-  let k = gFogP.y;
+  let pocket = gFogPocketP.x > 0.5;
+  let k = select(gFogP.y, 0.0, pocket);
   let a = k * d.y;
-  let b = max(gFogP.x * exp(clamp(-k * (o.y - gFogP.z), -30.0, 30.0)), 1.0e-7);
+  // Same window/midpoint as fogOpticalDepth so the sampling pdf stays consistent.
+  let win = fogPocketWindow(o + d * (s * 0.5));
+  let b = max(gFogP.x * win * exp(clamp(-k * (o.y - gFogP.z), -30.0, 30.0)), 1.0e-7);
   let tauS = fogOpticalDepth(o, d, s);
   let tauT = -log(max(1.0 - u * (1.0 - exp(-tauS)), 1.0e-7));
   if (abs(a) < 1.0e-4) {

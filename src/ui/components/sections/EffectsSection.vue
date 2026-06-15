@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ToggleSwitch from "primevue/toggleswitch";
+import Button from "primevue/button";
 import ParamSlider from "../ParamSlider.vue";
 import ColorParam from "../ColorParam.vue";
 import { useController } from "../../composables/use-controller";
@@ -21,16 +22,6 @@ const state = controller.state;
     @update:model-value="controller.setFogParam('density', $event)"
   />
   <ParamSlider
-    label="Height"
-    :min="0.1"
-    :max="6"
-    :step="0.05"
-    :model-value="state.fogHeight"
-    description="Top of the fog layer. Fog is densest near the ground and thins out above this height."
-    testid="param-fog-height"
-    @update:model-value="controller.setFogParam('height', $event)"
-  />
-  <ParamSlider
     label="Scatter"
     :min="-0.9"
     :max="0.9"
@@ -47,6 +38,106 @@ const state = controller.state;
     testid="param-fog-color"
     @update:model-value="controller.setFogColor($event)"
   />
+  <label
+    v-tooltip.left="
+      'Off: an infinite ground layer. On: a placeable blob you position over part of the scene, fixed relative to the camera. Works best for large, soft pockets in open space; small pockets near detailed structure can shimmer or pop.'
+    "
+    class="flex cursor-pointer items-center justify-between py-1.5 text-xs text-muted-color"
+  >
+    <span>Placeable pocket</span>
+    <ToggleSwitch
+      :model-value="state.fogShape === 'pocket'"
+      data-testid="param-fog-pocket-toggle"
+      @update:model-value="controller.setFogShape($event ? 'pocket' : 'layer')"
+    />
+  </label>
+
+  <!-- Layer mode: vertical slab shape + altitude. -->
+  <template v-if="state.fogShape !== 'pocket'">
+    <ParamSlider
+      label="Falloff"
+      :min="0.1"
+      :max="6"
+      :step="0.05"
+      :model-value="state.fogHeight"
+      description="How quickly the fog thins with height. Higher values keep it hugging the floor; lower values let it rise."
+      testid="param-fog-height"
+      @update:model-value="controller.setFogParam('height', $event)"
+    />
+    <ParamSlider
+      label="Level"
+      :min="-4"
+      :max="4"
+      :step="0.05"
+      :model-value="state.fogLevel"
+      description="Altitude of the fog layer. Slides the whole slab up or down."
+      testid="param-fog-level"
+      @update:model-value="controller.setFogParam('level', $event)"
+    />
+  </template>
+
+  <!-- Pocket mode: placeable, camera-fixed blob. -->
+  <template v-else>
+    <ParamSlider
+      label="Distance"
+      :min="0"
+      :max="12"
+      :step="0.05"
+      :model-value="state.fogPocketZ"
+      description="How far ahead of the camera the pocket sits."
+      testid="param-fog-pocket-z"
+      @update:model-value="controller.setFogPocket('z', $event)"
+    />
+    <ParamSlider
+      label="Sideways"
+      :min="-6"
+      :max="6"
+      :step="0.05"
+      :model-value="state.fogPocketX"
+      description="Shift the pocket left or right of centre."
+      testid="param-fog-pocket-x"
+      @update:model-value="controller.setFogPocket('x', $event)"
+    />
+    <ParamSlider
+      label="Up/down"
+      :min="-6"
+      :max="6"
+      :step="0.05"
+      :model-value="state.fogPocketY"
+      description="Shift the pocket above or below centre."
+      testid="param-fog-pocket-y"
+      @update:model-value="controller.setFogPocket('y', $event)"
+    />
+    <ParamSlider
+      label="Radius"
+      :min="0.2"
+      :max="10"
+      :step="0.05"
+      :model-value="state.fogPocketRadius"
+      description="Size of the fog blob."
+      testid="param-fog-pocket-radius"
+      @update:model-value="controller.setFogPocket('radius', $event)"
+    />
+    <ParamSlider
+      label="Softness"
+      :min="0"
+      :max="1"
+      :step="0.01"
+      :model-value="state.fogPocketEdge"
+      description="How gradually the pocket fades out at its edge."
+      testid="param-fog-pocket-edge"
+      @update:model-value="controller.setFogPocket('edge', $event)"
+    />
+    <Button
+      label="Place at focus"
+      icon="pi pi-bullseye"
+      text
+      size="small"
+      class="mt-1 self-start"
+      data-testid="param-fog-pocket-place"
+      @click="controller.placeFogAtFocus()"
+    />
+  </template>
 
   <div class="mt-3 border-t border-white/10 pt-3">
     <p class="pb-1 text-xs font-semibold text-muted-color">Glow</p>
