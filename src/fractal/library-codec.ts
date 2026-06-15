@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { defaultEffects } from "./effects-defaults";
 import { DEFAULT_SKY, ENVIRONMENTS } from "./environments";
 import { FORMULAS, getFormula } from "./registry";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS } from "./types";
@@ -158,20 +157,17 @@ export const lookSchema = z.object({
       microScale: finite,
       microRoughness: finite,
     }),
-    // Added after v5 shipped; defaulted (growth off) so older files keep parsing.
-    growth: z
-      .object({
-        length: finite,
-        density: finite,
-        mode: z.enum(["spikes", "bumps", "crystals", "fins"]),
-        sharpness: finite,
-        coverage: finite,
-        trapBias: finite,
-        color: hexColor,
-        colorBlend: finite,
-        emission: finite,
-      })
-      .default(() => defaultEffects().growth),
+    growth: z.object({
+      length: finite,
+      density: finite,
+      mode: z.enum(["spikes", "bumps", "crystals", "fins"]),
+      sharpness: finite,
+      coverage: finite,
+      trapBias: finite,
+      color: hexColor,
+      colorBlend: finite,
+      emission: finite,
+    }),
     post: z.object({
       vignetteStrength: finite,
       vignetteSoftness: finite,
@@ -195,49 +191,12 @@ export const userLookSchema = lookSchema.extend(stamps);
 export const userPresetSchema = presetSchema.extend(stamps);
 
 /**
- * Bumped when any library item changes shape; the parser is the migration seam.
- * Version 4 is the ADR-0010 shape/look split - older monolithic files are rejected
- * (pre-release app, no installed base to migrate). Version 5 replaces the single
- * `light` object with `ambient` + a `lights` array; v4 files are migrated in place.
- * Version 6 records the post-v5 additions of `shape.warp` (geometry-altering) and
- * `effects.growth` (look-altering): both are optional/defaulted, so a v5 file imports as
- * "warp/growth absent, use defaults", while a current export carries version 6 so older
- * v5-era builds reject it (newer-version guard) instead of silently dropping those fields.
- * Version 7 replaces the palette's fixed baseA/baseB/accent with a required multi-stop ramp
- * (`stops` + interpolation/colorSpace); there is no migration, so pre-ramp files are rejected
- * (pre-release app, no installed base to preserve).
- * Rule: any schema-shape change bumps the version.
+ * Stamped onto every export and checked on import: a file from a newer (unknown) version
+ * is rejected rather than silently mis-parsed, and a file from an older version is rejected
+ * too (no migration path - the app is the sole producer of these files). Rule: any
+ * schema-shape change bumps this.
  */
 export const LIBRARY_FILE_VERSION = 7;
-
-/**
- * v4 → v5 look migration: the old single key light becomes lights[0] (directional),
- * with the positional-side fields at the same defaults `keyLight()` uses. Shared by
- * the file parser and the localStorage loader. Pass-through for anything else.
- */
-export function migrateLookLightV4(raw: unknown): unknown {
-  if (typeof raw !== "object" || raw === null) return raw;
-  const look = raw as Record<string, unknown>;
-  if (!("light" in look) || "lights" in look) return raw;
-  const { light, ...rest } = look;
-  const old = (typeof light === "object" && light !== null ? light : {}) as Record<string, unknown>;
-  return {
-    ...rest,
-    ambient: old.ambient ?? 0,
-    lights: [
-      {
-        type: "directional",
-        enabled: true,
-        color: old.color ?? "#ffffff",
-        intensity: old.intensity ?? 1.5,
-        size: old.size ?? 0.18,
-        direction: old.direction ?? [0.48, 0.72, 0.42],
-        position: [1.2, 1.2, 1.2],
-        falloff: 1.5,
-      },
-    ],
-  };
-}
 
 export type ParseLibraryResult =
   | { readonly ok: true; readonly kind: "shape"; readonly item: FractalShape }
@@ -443,20 +402,14 @@ export function parseLibraryFile(text: string): ParseLibraryResult {
   if (typeof envelope.version !== "number" || envelope.version > LIBRARY_FILE_VERSION) {
     return { ok: false, error: "This file was exported by a newer KFractal version." };
   }
-  if (envelope.version < 4) {
-    return { ok: false, error: "This file predates the shape/look split and can't be imported." };
+  if (envelope.version < LIBRARY_FILE_VERSION) {
+    return {
+      ok: false,
+      error: "This file was exported by an older, unsupported KFractal version.",
+    };
   }
   const kind = envelope.kind;
-  let item = envelope.item;
-  if (envelope.version === 4) {
-    if (kind === "look") {
-      item = migrateLookLightV4(item);
-    } else if (kind === "preset" && typeof item === "object" && item !== null) {
-      const preset = item as Record<string, unknown>;
-      item = { ...preset, look: migrateLookLightV4(preset.look) };
-    }
-  }
-  const parsed = KIND_SCHEMAS[kind].safeParse(item);
+  const parsed = KIND_SCHEMAS[kind].safeParse(envelope.item);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const path = issue?.path.join(".") || kind;

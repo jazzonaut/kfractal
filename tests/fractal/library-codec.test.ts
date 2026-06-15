@@ -4,7 +4,6 @@ import {
   buildLibraryFile,
   clampLookToEnvironments,
   clampShapeToRegistry,
-  migrateLookLightV4,
   parseLibraryFile,
 } from "../../src/fractal/library-codec";
 import { SHAPES } from "../../src/fractal/shapes";
@@ -60,9 +59,9 @@ describe("envelope version guards", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects pre-split (v < 4) files", () => {
+  it("rejects a file from an older version", () => {
     const file = JSON.parse(buildLibraryFile("look", LOOKS[0]!)) as Record<string, unknown>;
-    file.version = 3;
+    file.version = LIBRARY_FILE_VERSION - 1;
     const result = parseLibraryFile(JSON.stringify(file));
     expect(result.ok).toBe(false);
   });
@@ -75,28 +74,6 @@ describe("envelope version guards", () => {
   it("accepts the current version", () => {
     const result = parseLibraryFile(buildLibraryFile("look", LOOKS[0]!));
     expect(result.ok).toBe(true);
-  });
-});
-
-describe("migrateLookLightV4", () => {
-  it("converts a single v4 light into a lights array", () => {
-    const v4 = {
-      id: "x",
-      name: "X",
-      light: { color: "#abcdef", intensity: 2, size: 0.2, direction: [0, 1, 0] },
-    };
-    const migrated = migrateLookLightV4(v4) as Record<string, unknown>;
-    expect(Array.isArray(migrated.lights)).toBe(true);
-    const lights = migrated.lights as Array<Record<string, unknown>>;
-    expect(lights).toHaveLength(1);
-    expect(lights[0]!.type).toBe("directional");
-    expect(lights[0]!.color).toBe("#abcdef");
-    expect("light" in migrated).toBe(false);
-  });
-
-  it("is a pass-through when lights already exist", () => {
-    const v5 = { id: "x", name: "X", lights: [{ type: "directional" }] };
-    expect(migrateLookLightV4(v5)).toBe(v5);
   });
 });
 

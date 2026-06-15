@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadUserLibrary, saveUserLibrary } from "../../src/fractal/user-library";
 import { SHAPES } from "../../src/fractal/shapes";
-import { LOOKS } from "../../src/fractal/looks";
-import type { UserLook, UserShape } from "../../src/fractal/types";
+import type { UserShape } from "../../src/fractal/types";
 
 const STORAGE_KEY = "kf.library.user";
 
@@ -66,7 +65,7 @@ describe("loadUserLibrary", () => {
     expect(loadUserLibrary().shapes).toHaveLength(0);
   });
 
-  it("loads valid v2 items", () => {
+  it("loads valid current-version items", () => {
     saveUserLibrary({ shapes: [userShape()], looks: [], presets: [] });
     const lib = loadUserLibrary();
     expect(lib.shapes).toHaveLength(1);
@@ -77,7 +76,7 @@ describe("loadUserLibrary", () => {
     mock.store.set(
       STORAGE_KEY,
       JSON.stringify({
-        version: 2,
+        version: 3,
         shapes: [userShape(), { garbage: true }],
         looks: [],
         presets: [],
@@ -87,31 +86,13 @@ describe("loadUserLibrary", () => {
     expect(lib.shapes).toHaveLength(1);
     expect(console.warn).toHaveBeenCalled();
   });
-
-  it("migrates a v1 blob's single-light look into a lights array", () => {
-    const v1Look = {
-      ...LOOKS[0]!,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      lights: undefined,
-      light: { color: "#ffffff", intensity: 2, size: 0.2, direction: [0, 1, 0] },
-    } as unknown;
-    mock.store.set(
-      STORAGE_KEY,
-      JSON.stringify({ version: 1, shapes: [], looks: [v1Look], presets: [] }),
-    );
-    const lib = loadUserLibrary();
-    expect(lib.looks).toHaveLength(1);
-    expect(Array.isArray((lib.looks[0] as UserLook).lights)).toBe(true);
-    expect((lib.looks[0] as UserLook).lights.length).toBeGreaterThan(0);
-  });
 });
 
 describe("saveUserLibrary", () => {
   it("writes the current storage version and returns true", () => {
     expect(saveUserLibrary({ shapes: [userShape()], looks: [], presets: [] })).toBe(true);
     const blob = JSON.parse(mock.store.get(STORAGE_KEY)!) as { version: number; shapes: unknown[] };
-    expect(blob.version).toBe(2);
+    expect(blob.version).toBe(3);
     expect(blob.shapes).toHaveLength(1);
   });
 

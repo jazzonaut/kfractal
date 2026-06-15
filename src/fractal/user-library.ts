@@ -1,7 +1,6 @@
 import {
   clampLookToEnvironments,
   clampShapeToRegistry,
-  migrateLookLightV4,
   userLookSchema,
   userPresetSchema,
   userShapeSchema,
@@ -11,20 +10,20 @@ import type { UserLook, UserPreset, UserShape } from "./types";
 /**
  * The user library in localStorage (ADR-0007, recast by ADR-0010): one blob holding the
  * three authorable kinds. Plain explicit read/write - not a reactive composable - so
- * quota failures and schema migration have one seam, and the controller (which lives
- * outside Vue) can own the in-memory lists.
- *
- * Replaces the pre-split `kf.presets.user` key (pre-release, intentionally abandoned).
+ * quota failures have one seam, and the controller (which lives outside Vue) can own
+ * the in-memory lists.
  */
 
 const STORAGE_KEY = "kf.library.user";
 
 /**
- * Bumped when the stored blob changes shape; `loadUserLibrary` is the migration seam.
- * Version 2 replaces the single look light with `ambient` + a `lights` array; v1 blobs
- * are migrated on load (the schemas would otherwise silently drop every stored look).
+ * Stamped on write and required to match on read; a mismatched blob is ignored wholesale.
+ * Bumped to 3 when `effects.growth` became a required schema field (its `.default()` was
+ * removed), so a pre-growth blob is rejected as a unit rather than silently thinned of the
+ * looks that predate it - keeping this path's "older = reject" stance identical to the
+ * file-import version guard.
  */
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 3;
 
 export interface UserLibrary {
   shapes: UserShape[];
@@ -81,18 +80,7 @@ export function loadUserLibrary(): UserLibrary {
     return EMPTY();
   }
   const candidate = blob as Partial<StorageBlob>;
-  let looks: unknown = candidate.looks;
-  let presets: unknown = candidate.presets;
-  if (candidate.version === 1) {
-    looks = Array.isArray(looks) ? looks.map(migrateLookLightV4) : looks;
-    presets = Array.isArray(presets)
-      ? presets.map((p: unknown) =>
-          typeof p === "object" && p !== null
-            ? { ...p, look: migrateLookLightV4((p as { look?: unknown }).look) }
-            : p,
-        )
-      : presets;
-  } else if (candidate.version !== STORAGE_VERSION) {
+  if (candidate.version !== STORAGE_VERSION) {
     console.warn(`KFractal: ignoring ${STORAGE_KEY} blob with unknown version.`);
     return EMPTY();
   }
@@ -104,10 +92,10 @@ export function loadUserLibrary(): UserLibrary {
     shapes: parseList<UserShape>(candidate.shapes, userShapeSchema, "shape").map(
       (shape) => clampShapeToRegistry(shape) as UserShape,
     ),
-    looks: parseList<UserLook>(looks, userLookSchema, "look").map(
+    looks: parseList<UserLook>(candidate.looks, userLookSchema, "look").map(
       (look) => clampLookToEnvironments(look) as UserLook,
     ),
-    presets: parseList<UserPreset>(presets, userPresetSchema, "preset").map((preset) => ({
+    presets: parseList<UserPreset>(candidate.presets, userPresetSchema, "preset").map((preset) => ({
       ...preset,
       shape: clampShapeToRegistry(preset.shape),
       look: clampLookToEnvironments(preset.look),
