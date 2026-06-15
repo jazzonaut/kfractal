@@ -3,8 +3,8 @@ import { ENV_ATLAS_H, ENV_H, GRID_H, GRID_W } from "../environment";
 /**
  * WGSL render core (ADR-0002, ADR-0003, ADR-0004, ADR-0005).
  *
- * `buildRenderSampleWGSL(formulaDE)` returns the full module for ONE formula: the injected
- * DE (`fn formulaDE(c) -> vec2(distance, trap)`) is compiled in, so each formula gets its
+ * `buildRenderSampleWGSL(formulaDE, previewOnly?)` returns the full module for ONE formula: the
+ * injected DE (`fn formulaDE(c) -> vec2(distance, trap)`) is compiled in, so each formula gets its
  * own cached pipeline with zero runtime branching on formula choice.
  *
  * A single `renderSample()` entry returns ONE linear-HDR sample for a pixel:
@@ -15,6 +15,10 @@ import { ENV_ATLAS_H, ENV_H, GRID_H, GRID_W } from "../environment";
  *   mode 2  feature pass   - primary-hit vec4(normal, depth) for the denoiser (miss: w=1e9)
  *   mode 3  feature pass   - primary-hit vec4(albedo, 1) for the denoiser (miss: 0)
  * Feature passes are deterministic (no AA jitter, no DOF), so they align with the mean image.
+ *
+ * `previewOnly` emits just the mode-0 dispatch (see PREVIEW_DISPATCH), so DCE drops the path
+ * tracer / NEE / shadow march / env alias sampling / Sobol sampler - a cheaper, faster-compiling
+ * preview-dedicated pipeline. The default (false) emits the full four-mode dispatch.
  *
  * The full Material struct (ADR-0005) is albedo/roughness/specular/translucency/ior/emission;
  * albedo and emission are driven by the orbit trap through the gradient.
@@ -27,7 +31,75 @@ import { ENV_ATLAS_H, ENV_H, GRID_H, GRID_W } from "../environment";
 
 export const RENDER_SAMPLE_FN = "renderSample";
 
-export function buildRenderSampleWGSL(formulaDE: string): string {
+// Mode-dispatch tail of the entry. The full build dispatches all four modes (preview,
+// pathtrace, the two feature passes). The preview-only build emits just the preview path,
+// so DCE drops pathTrace / NEE / shadowMarch / env alias sampling / the Sobol sampler -
+// the experiment for whether a preview-dedicated pipeline compiles materially faster.
+const RENDER_DISPATCH = /* wgsl */ `  let tracing = mode > 0.5 && mode < 1.5;
+
+  var juv = uv;
+  if (tracing) {
+    juv = uv + (rnd2f() - 0.5) / resolution;
+  }
+  var p = juv * 2.0 - 1.0;
+  let aspect = resolution.x / resolution.y;
+  p.x = p.x * aspect;
+
+  var ro = camPos;
+  var rd = normalize(camFwd + camRight * (p.x * tanHalfFov) + camUp * (p.y * tanHalfFov));
+
+  if (mode > 2.5) {
+    let h = march(ro, rd);
+    if (h.hit < 0.5) {
+      // Miss pixels under fog carry the fog tint so the denoiser's albedo weight
+      // clusters heavily-fogged pixels together instead of smearing shafts.
+      if (gFogOn) {
+        let haze = 1.0 - fogTransmittance(ro, rd, gMaxDist);
+        return vec4<f32>(gFogC.rgb * haze, 0.0);
+      }
+      return vec4<f32>(0.0);
+    }
+    var alb = surfaceMaterial(h.trap, h.pos).albedo;
+    if (gFogOn) {
+      alb = mix(alb, gFogC.rgb, 1.0 - fogTransmittance(ro, rd, h.t));
+    }
+    return vec4<f32>(alb, 1.0);
+  }
+  if (mode > 1.5) {
+    let h = march(ro, rd);
+    if (h.hit < 0.5) {
+      // Unit sentinel normal (not zero) so the denoiser's normal weight is 1 between two
+      // miss pixels (dot of parallel unit vectors), letting its depth+albedo weights cluster
+      // background/fog taps. A zero normal would zero every neighbor weight and pass miss
+      // pixels through unfiltered. Hit<->miss taps are still separated by the 1e9 depth weight.
+      return vec4<f32>(0.0, 0.0, 1.0, 1.0e9);
+    }
+    return vec4<f32>(calcNormal(h.pos, h.t), h.t);
+  }
+
+  if (tracing && lens.x > 0.0001) {
+    let focal = ro + rd * lens.y;
+    let lensU = rnd2f();
+    let r = sqrt(lensU.x);
+    let ang = TWO_PI * lensU.y;
+    let offset = (camRight * cos(ang) + camUp * sin(ang)) * r * lens.x;
+    ro = ro + offset;
+    rd = normalize(focal - ro);
+  }
+
+  if (tracing) {
+    return vec4<f32>(pathTrace(ro, rd, envTex, envTexSampler), 1.0);
+  }
+  return vec4<f32>(previewShade(ro, rd, envTex, envTexSampler), 1.0);`;
+
+const PREVIEW_DISPATCH = /* wgsl */ `  var p = uv * 2.0 - 1.0;
+  let aspect = resolution.x / resolution.y;
+  p.x = p.x * aspect;
+  let ro = camPos;
+  let rd = normalize(camFwd + camRight * (p.x * tanHalfFov) + camUp * (p.y * tanHalfFov));
+  return vec4<f32>(previewShade(ro, rd, envTex, envTexSampler), 1.0);`;
+
+export function buildRenderSampleWGSL(formulaDE: string, previewOnly = false): string {
   return /* wgsl */ `
 fn ${RENDER_SAMPLE_FN}(
   uv: vec2<f32>,
@@ -195,62 +267,7 @@ fn ${RENDER_SAMPLE_FN}(
   gEpsFloor = gSurfEps * 0.05;
   gNormScale = gNormEps / max(gSurfEps, 1.0e-9);
 
-  let tracing = mode > 0.5 && mode < 1.5;
-
-  var juv = uv;
-  if (tracing) {
-    juv = uv + (rnd2f() - 0.5) / resolution;
-  }
-  var p = juv * 2.0 - 1.0;
-  let aspect = resolution.x / resolution.y;
-  p.x = p.x * aspect;
-
-  var ro = camPos;
-  var rd = normalize(camFwd + camRight * (p.x * tanHalfFov) + camUp * (p.y * tanHalfFov));
-
-  if (mode > 2.5) {
-    let h = march(ro, rd);
-    if (h.hit < 0.5) {
-      // Miss pixels under fog carry the fog tint so the denoiser's albedo weight
-      // clusters heavily-fogged pixels together instead of smearing shafts.
-      if (gFogOn) {
-        let haze = 1.0 - fogTransmittance(ro, rd, gMaxDist);
-        return vec4<f32>(gFogC.rgb * haze, 0.0);
-      }
-      return vec4<f32>(0.0);
-    }
-    var alb = surfaceMaterial(h.trap, h.pos).albedo;
-    if (gFogOn) {
-      alb = mix(alb, gFogC.rgb, 1.0 - fogTransmittance(ro, rd, h.t));
-    }
-    return vec4<f32>(alb, 1.0);
-  }
-  if (mode > 1.5) {
-    let h = march(ro, rd);
-    if (h.hit < 0.5) {
-      // Unit sentinel normal (not zero) so the denoiser's normal weight is 1 between two
-      // miss pixels (dot of parallel unit vectors), letting its depth+albedo weights cluster
-      // background/fog taps. A zero normal would zero every neighbor weight and pass miss
-      // pixels through unfiltered. Hit<->miss taps are still separated by the 1e9 depth weight.
-      return vec4<f32>(0.0, 0.0, 1.0, 1.0e9);
-    }
-    return vec4<f32>(calcNormal(h.pos, h.t), h.t);
-  }
-
-  if (tracing && lens.x > 0.0001) {
-    let focal = ro + rd * lens.y;
-    let lensU = rnd2f();
-    let r = sqrt(lensU.x);
-    let ang = TWO_PI * lensU.y;
-    let offset = (camRight * cos(ang) + camUp * sin(ang)) * r * lens.x;
-    ro = ro + offset;
-    rd = normalize(focal - ro);
-  }
-
-  if (tracing) {
-    return vec4<f32>(pathTrace(ro, rd, envTex, envTexSampler), 1.0);
-  }
-  return vec4<f32>(previewShade(ro, rd, envTex, envTexSampler), 1.0);
+${previewOnly ? PREVIEW_DISPATCH : RENDER_DISPATCH}
 }
 
 struct Hit {

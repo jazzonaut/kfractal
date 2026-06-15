@@ -90,6 +90,7 @@ export function createWorkstationState(
     fps: 0,
     sampleCount: 0,
     rendering: false,
+    preparingRender: false,
     denoise: true,
     diveEnabled: true,
     controlSensitivity: loadControlSensitivity(),

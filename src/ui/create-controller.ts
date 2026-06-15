@@ -139,7 +139,7 @@ export function createController(deps: {
   const controller: Controller = {
     state,
     startRender: () => {
-      engine.startRender();
+      void engine.startRender();
     },
     stopRender: () => {
       resetAccumulation();

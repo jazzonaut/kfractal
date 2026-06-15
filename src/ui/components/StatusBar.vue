@@ -92,7 +92,15 @@ function onExport(): void {
     </template>
 
     <Button
-      v-if="accumulating"
+      v-if="state.preparingRender"
+      label="Preparing…"
+      size="small"
+      :loading="true"
+      disabled
+      data-testid="preparing-button"
+    />
+    <Button
+      v-else-if="accumulating"
       label="Stop"
       icon="pi pi-stop"
       size="small"

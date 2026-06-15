@@ -220,6 +220,8 @@ export class RenderEngine {
     this.sampleIndexValue = 0;
     this.state.sampleCount = 0;
     this.state.rendering = false;
+    // Cancels an in-flight startRender compile: its post-await guard sees this and stays preview.
+    this.state.preparingRender = false;
     // Back in preview: re-apply the auto-quality tier (no-op when already at preview scale, so
     // this stays free on the per-edit/per-camera-move path that calls resetAccumulation).
     this.syncRenderScale();
@@ -234,7 +236,19 @@ export class RenderEngine {
   }
 
   // Start an explicit render run (Controller.startRender): accumulate from sample 0.
-  startRender(): void {
+  async startRender(): Promise<void> {
+    // Compile the full path-trace pipeline off the synchronous render path first: the sample-0
+    // feature pass would otherwise compile it inside renderTo and freeze the UI for the cold
+    // compile. The live preview keeps running while this resolves (usually a warm cache hit).
+    this.state.preparingRender = true;
+    try {
+      await this.fractal.ensureRenderPipeline(this.renderer, this.sampleRT);
+    } catch (error) {
+      console.error("Render pipeline compile failed; starting render anyway", error);
+    }
+    // Stopped or edited mid-compile (resetAccumulation cleared the flag): stay in preview.
+    if (!this.state.preparingRender) return;
+    this.state.preparingRender = false;
     this.sampleIndexValue = 0;
     this.state.sampleCount = 0;
     this.state.rendering = true;

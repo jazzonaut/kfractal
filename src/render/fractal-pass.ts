@@ -151,7 +151,19 @@ export class FractalPass {
 
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private readonly materials = new Map<FractalFormulaId, THREE.MeshBasicNodeMaterial>();
+  // Two pipelines per formula: a cheap preview-only material (the analytic single-march shown
+  // while interacting - small enough to compile in ~1s and to persist in the browser's shader
+  // cache across reloads) and the full path-trace/feature material (modes 1-3, the expensive
+  // ~6-9s compile that never fit the cache). The mesh carries whichever the current mode needs,
+  // so boot and live preview only ever touch the cheap one.
+  private readonly previewMaterials = new Map<FractalFormulaId, THREE.MeshBasicNodeMaterial>();
+  private readonly renderMaterials = new Map<FractalFormulaId, THREE.MeshBasicNodeMaterial>();
+  private activeFormula: FractalFormulaId;
+  // Serializes every compileAsync (warm + on-demand). three's compileAsync saves/restores shared
+  // renderer state and is NOT re-entrant, so two overlapping calls - e.g. a Render click landing
+  // mid-warm - would corrupt each other's state. All compiles chain through here so the entry
+  // point can't matter; see compilePipeline.
+  private compileChain: Promise<unknown> = Promise.resolve();
   private readonly mesh: THREE.Mesh;
   /*
    * One persistent environment atlas shared by every formula pipeline. Environments are
@@ -232,18 +244,19 @@ export class FractalPass {
       warpQ: uniform(new THREE.Vector4(0, 1.5, 1, packWarpAxes(defaultWarp()))),
     };
 
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.materialFor(initialFormula));
+    this.activeFormula = initialFormula;
+    this.mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      this.previewMaterialFor(initialFormula),
+    );
     this.mesh.frustumCulled = false;
     this.scene.add(this.mesh);
   }
 
-  /** Build (once) and return the compiled material for a formula. */
-  private materialFor(id: FractalFormulaId): THREE.MeshBasicNodeMaterial {
-    const cached = this.materials.get(id);
-    if (cached) return cached;
-
+  /** Build a formula's material; `previewOnly` selects the cheap preview-only shader. */
+  private buildMaterial(id: FractalFormulaId, previewOnly: boolean): THREE.MeshBasicNodeMaterial {
     const u = this.uniforms;
-    const renderSample: any = wgslFn(buildRenderSampleWGSL(getFormula(id).de));
+    const renderSample: any = wgslFn(buildRenderSampleWGSL(getFormula(id).de, previewOnly));
     const material = new THREE.MeshBasicNodeMaterial();
     material.colorNode = renderSample({
       uv: uv(),
@@ -310,12 +323,40 @@ export class FractalPass {
     });
     material.depthTest = false;
     material.depthWrite = false;
-    this.materials.set(id, material);
     return material;
   }
 
+  /** The cheap preview-only pipeline (mode 0), built once and cached. */
+  private previewMaterialFor(id: FractalFormulaId): THREE.MeshBasicNodeMaterial {
+    const cached = this.previewMaterials.get(id);
+    if (cached) return cached;
+    const material = this.buildMaterial(id, true);
+    this.previewMaterials.set(id, material);
+    return material;
+  }
+
+  /** The full path-trace + feature pipeline (modes 1-3), built once and cached. */
+  private renderMaterialFor(id: FractalFormulaId): THREE.MeshBasicNodeMaterial {
+    const cached = this.renderMaterials.get(id);
+    if (cached) return cached;
+    const material = this.buildMaterial(id, false);
+    this.renderMaterials.set(id, material);
+    return material;
+  }
+
+  /** Put the pipeline the active formula + current mode need onto the mesh: the preview-only
+   * material for mode 0, the full material for the path-trace/feature passes. */
+  private syncMeshMaterial(): void {
+    const id = this.activeFormula;
+    this.mesh.material =
+      this.uniforms.mode.value === MODE_PREVIEW
+        ? this.previewMaterialFor(id)
+        : this.renderMaterialFor(id);
+  }
+
   setFormula(id: FractalFormulaId): void {
-    this.mesh.material = this.materialFor(id);
+    this.activeFormula = id;
+    this.syncMeshMaterial();
   }
 
   /** Map a shape's geometry side onto the uniforms and swap to its formula's pipeline. */
@@ -548,6 +589,9 @@ export class FractalPass {
 
   setMode(mode: number): void {
     this.uniforms.mode.value = mode;
+    // Preview and path-trace/feature passes ride different pipelines; swap the mesh to the
+    // one this mode needs so a preview frame never touches (or compiles) the heavy material.
+    this.syncMeshMaterial();
   }
 
   setFrame(frame: number): void {
@@ -590,9 +634,13 @@ export class FractalPass {
   }
 
   /**
-   * Warm the GPU pipeline for every formula so a later preset switch doesn't stall the main
-   * thread on a first-use compile (the pathtrace shader is ~9s under FXC on D3D12; see
-   * pathtrace.ts). Compiles against `target` so the cached pipeline is keyed to the sample
+   * Warm pipelines in the background after first paint. Two tiers: every formula's cheap
+   * preview pipeline (so a preset switch shows instantly, and these are small enough to
+   * persist in the browser shader cache across reloads), plus the ACTIVE formula's full
+   * path-trace/feature pipeline (the ~6-9s compile) so the first render of what's on screen
+   * doesn't stall. The other formulas' full pipelines compile lazily on first render - one
+   * stall each, once per session, since the big blobs don't survive a reload anyway.
+   * Compiles against `target` so the cached pipeline is keyed to the sample
    * target's format - the same pipeline `renderTo` later hits - and runs on an isolated
    * scene so it never swaps the material on the live mesh mid-frame. `compileAsync` builds
    * each pipeline asynchronously, so this doesn't block the JS frame loop (the live preview
@@ -607,25 +655,31 @@ export class FractalPass {
     target: THREE.RenderTarget,
     onProgress: (done: number, total: number) => void,
   ): Promise<void> {
-    const warmScene = new THREE.Scene();
-    const warmMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
-    warmMesh.frustumCulled = false;
-    warmScene.add(warmMesh);
-    const total = FORMULAS.length;
+    // Every formula's preview pipeline, then the active formula's full pipeline last (heaviest;
+    // the formula already on screen resolves its preview from cache immediately).
+    const jobs: { label: string; build: () => THREE.MeshBasicNodeMaterial }[] = [
+      ...FORMULAS.map((def) => ({
+        label: `${def.id}:preview`,
+        build: (): THREE.MeshBasicNodeMaterial => this.previewMaterialFor(def.id),
+      })),
+      {
+        label: `${this.activeFormula}:render`,
+        build: (): THREE.MeshBasicNodeMaterial => this.renderMaterialFor(this.activeFormula),
+      },
+    ];
+    const total = jobs.length;
     let done = 0;
     onProgress(done, total);
     try {
-      for (const def of FORMULAS) {
-        warmMesh.material = this.materialFor(def.id);
-        // Bind the real sample target so the warmed pipeline matches what renderTo uses,
-        // not the canvas backbuffer (compileAsync keys the pipeline off the bound target).
-        renderer.setRenderTarget(target);
+      // compilePipeline serializes the actual compiles (compileAsync is not re-entrant);
+      // awaiting each here also keeps only one warm queued at a time and drives the readout.
+      for (const job of jobs) {
         try {
-          await renderer.compileAsync(warmScene, this.camera);
+          await this.compilePipeline(renderer, target, job.build());
         } catch (error) {
           // One bad shader must not abort warming the rest, nor escape as an unhandled
           // rejection: log and carry on so `done` still climbs to `total`.
-          console.error(`Shader warm failed for formula "${def.id}"`, error);
+          console.error(`Shader warm failed for "${job.label}"`, error);
         }
         done += 1;
         onProgress(done, total);
@@ -634,14 +688,66 @@ export class FractalPass {
       // The live loop's renderTo leaves the target null between frames, but reset explicitly
       // so a clean state is guaranteed even if no frame ran during warming.
       renderer.setRenderTarget(null);
-      warmMesh.geometry.dispose();
-      warmScene.clear();
+    }
+  }
+
+  /**
+   * compileAsync a single material on a throwaway scene bound to `target`, so it never swaps the
+   * live mesh's material mid-frame. Every call is appended to `compileChain` so compiles run
+   * strictly one at a time, however they were triggered (warm loop, Render click, double-click):
+   * three's compileAsync is not re-entrant. The chain survives a rejected compile (caught) so one
+   * bad shader doesn't wedge the rest. Within a single run, the target bind and the compileAsync
+   * call are synchronous together (no await between) so the pipeline's color format is captured
+   * before any interleaving frame can rebind the target.
+   */
+  private compilePipeline(
+    renderer: THREE.WebGPURenderer,
+    target: THREE.RenderTarget,
+    material: THREE.MeshBasicNodeMaterial,
+  ): Promise<void> {
+    const run = async (): Promise<void> => {
+      const scene = new THREE.Scene();
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      renderer.setRenderTarget(target);
+      const compiled = renderer.compileAsync(scene, this.camera);
+      try {
+        await compiled;
+      } finally {
+        mesh.geometry.dispose();
+        scene.clear();
+      }
+    };
+    const next = this.compileChain.then(run, run);
+    // Keep the chain alive past a rejection so a single failed compile doesn't block the rest;
+    // `next` itself still rejects so this call's caller sees the error.
+    this.compileChain = next.catch(() => {});
+    return next;
+  }
+
+  /**
+   * Compile the active formula's full path-trace/feature pipeline off the synchronous render
+   * path. startRender awaits this before flipping into the render loop, whose sample-0 feature
+   * pass would otherwise compile it inside renderTo and freeze the UI for the cold compile.
+   * A near-instant cache hit when the background warm already covered the active formula.
+   */
+  async ensureRenderPipeline(
+    renderer: THREE.WebGPURenderer,
+    target: THREE.RenderTarget,
+  ): Promise<void> {
+    try {
+      await this.compilePipeline(renderer, target, this.renderMaterialFor(this.activeFormula));
+    } finally {
+      renderer.setRenderTarget(null);
     }
   }
 
   dispose(): void {
-    for (const material of this.materials.values()) material.dispose();
-    this.materials.clear();
+    for (const material of this.previewMaterials.values()) material.dispose();
+    for (const material of this.renderMaterials.values()) material.dispose();
+    this.previewMaterials.clear();
+    this.renderMaterials.clear();
     this.mesh.geometry.dispose();
     this.envRadianceTexture.dispose();
     this.scene.clear();

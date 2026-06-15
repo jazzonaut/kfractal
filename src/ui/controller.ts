@@ -138,6 +138,9 @@ export interface WorkstationState {
   sampleCount: number;
   /** True while the progressive path trace is accumulating (explicit Render action). */
   rendering: boolean;
+  /** True between pressing Render and accumulation starting, while the full path-trace pipeline
+   * compiles off the blocking path; the live preview keeps running. */
+  preparingRender: boolean;
   /** Edge-aware à-trous filter on the accumulating render (fades out as it converges). */
   denoise: boolean;
   /** Deep-zoom dive (default on): scrolling in performs the infinite zoom into surface
