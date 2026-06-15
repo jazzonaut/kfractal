@@ -107,12 +107,18 @@ async function main(): Promise<void> {
   const initialPreset = PRESETS[0];
   if (!initialPreset) throw new Error("KFractal needs at least one preset.");
 
-  // Assigned once the engine exists (below); the device-lost callback may fire at any later
-  // point and routes through here so it can both stop the engine loop and surface the prompt.
-  let handleDeviceLost: ((info: GPUDeviceLostInfo) => void) | undefined;
+  // The device-lost callback may fire at any point after the renderer exists - including during
+  // the engine's shader compile below, the likeliest moment for a TDR on a weak GPU. Until the
+  // engine exists we can't stop its loop, but we must still surface the prompt; once it exists we
+  // upgrade this to also stop the frame loop so it can't spam the dead device.
+  let handleDeviceLost: (info: GPUDeviceLostInfo) => void = (info) => {
+    showFatal(
+      `The graphics device was lost${info.message ? ` (${info.message})` : ""}. Reload the page to continue.`,
+    );
+  };
   let renderer: THREE.WebGPURenderer;
   try {
-    renderer = await createRenderer(container, (info) => handleDeviceLost?.(info));
+    renderer = await createRenderer(container, (info) => handleDeviceLost(info));
   } catch (error) {
     showFatal(
       `KFractal could not start the WebGPU renderer: ${error instanceof Error ? error.message : "unknown error"}.`,
@@ -148,8 +154,8 @@ async function main(): Promise<void> {
     },
     onFatal: showFatal,
   });
-  // Now the engine exists: a device loss stops its frame loop (so it can't spam the dead
-  // device) before surfacing the unrecoverable-reset prompt.
+  // Now the engine exists: upgrade the handler so a device loss also stops its frame loop (so it
+  // can't spam the dead device) before surfacing the unrecoverable-reset prompt.
   handleDeviceLost = (info): void => {
     engine.notifyDeviceLost();
     showFatal(
@@ -179,73 +185,76 @@ async function main(): Promise<void> {
   engine.setAutoQuality(state.autoQuality);
   mountUi(controller);
 
-  // Dev/authoring hook (ADR-0007): lets the settle-shots harness and preset authors drive
-  // the camera and controls programmatically. Not part of the Controller seam.
-  (window as unknown as Record<string, unknown>).__kf = {
-    controller,
-    camera: () => ({
-      target: stage.target.toArray(),
-      yaw: stage.yaw,
-      pitch: stage.pitch,
-      roll: stage.roll,
-      distance: stage.distance,
-      fov: stage.camera.fov,
-    }),
-    setCamera: (cam: {
-      target?: [number, number, number];
-      yaw?: number;
-      pitch?: number;
-      roll?: number;
-      distance?: number;
-      fov?: number;
-    }) => {
-      if (cam.target) stage.target.set(cam.target[0], cam.target[1], cam.target[2]);
-      stage.applyPreset({
-        target: cam.target ?? (stage.target.toArray() as [number, number, number]),
-        yaw: cam.yaw ?? stage.yaw,
-        pitch: cam.pitch ?? stage.pitch,
-        roll: cam.roll ?? stage.roll,
-        distance: cam.distance ?? stage.distance,
-        fov: cam.fov ?? stage.camera.fov,
-      });
-      dive.reset();
-      resetAccumulation();
-    },
-    samples: () => engine.sampleIndex,
-    dive: () => ({ offset: dive.offset.toArray(), scale: dive.scale, debug: { ...dive.debug } }),
-    // Camera-space distance to the surface per the f64 CPU DE; diagnoses buried (≈0)
-    // vs empty-space (≫ extent) cameras during dive verification. Growth-adjusted so
-    // it stays truthful against the displaced GPU surface.
-    deAtCamera: () => {
-      const p = fractal.uniforms.formulaP.value;
-      const f = stage.camera.position
-        .clone()
-        .applyMatrix3(dive.basis)
-        .multiplyScalar(dive.scale)
-        .add(dive.offset);
-      const params = {
-        p0: p.x,
-        p1: p.y,
-        p2: p.z,
-        p3: p.w,
-        iterations: fractal.uniforms.iterations.value,
-      };
-      const de = getCpuDe(engine.shape.formula);
-      // Warp-adjusted (like the dive's own probes) so it stays truthful under warp.
-      const raw = dive.warp
-        ? warpCpuDe((x, y, z) => de(x, y, z, params), dive.warp, f.x, f.y, f.z)
-        : de(f.x, f.y, f.z, params);
-      return raw / dive.scale - dive.growthMargin;
-    },
-  };
-
   // Begin driving frames and listening for window resizes (ADR-0003).
   engine.start();
 
-  // Single teardown path (HMR, embedding, tests): stops the loop, drops the resize listener,
-  // and releases the GPU resources the engine owns.
-  const teardown = (): void => engine.teardown();
-  (window as unknown as { __kf: Record<string, unknown> }).__kf.teardown = teardown;
+  // Dev/authoring hook (ADR-0007): lets the settle-shots harness and preset authors drive
+  // the camera and controls programmatically. Not part of the Controller seam, and gated to
+  // dev builds so it (and the `teardown` handle) is tree-shaken from production instead of
+  // exposing controller/camera internals and a GPU teardown on `window`. The Playwright
+  // harnesses that consume `window.__kf` run against `pnpm dev`, where this is present.
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__kf = {
+      controller,
+      camera: () => ({
+        target: stage.target.toArray(),
+        yaw: stage.yaw,
+        pitch: stage.pitch,
+        roll: stage.roll,
+        distance: stage.distance,
+        fov: stage.camera.fov,
+      }),
+      setCamera: (cam: {
+        target?: [number, number, number];
+        yaw?: number;
+        pitch?: number;
+        roll?: number;
+        distance?: number;
+        fov?: number;
+      }) => {
+        if (cam.target) stage.target.set(cam.target[0], cam.target[1], cam.target[2]);
+        stage.applyPreset({
+          target: cam.target ?? (stage.target.toArray() as [number, number, number]),
+          yaw: cam.yaw ?? stage.yaw,
+          pitch: cam.pitch ?? stage.pitch,
+          roll: cam.roll ?? stage.roll,
+          distance: cam.distance ?? stage.distance,
+          fov: cam.fov ?? stage.camera.fov,
+        });
+        dive.reset();
+        resetAccumulation();
+      },
+      samples: () => engine.sampleIndex,
+      dive: () => ({ offset: dive.offset.toArray(), scale: dive.scale, debug: { ...dive.debug } }),
+      // Camera-space distance to the surface per the f64 CPU DE; diagnoses buried (≈0)
+      // vs empty-space (≫ extent) cameras during dive verification. Growth-adjusted so
+      // it stays truthful against the displaced GPU surface.
+      deAtCamera: () => {
+        const p = fractal.uniforms.formulaP.value;
+        const f = stage.camera.position
+          .clone()
+          .applyMatrix3(dive.basis)
+          .multiplyScalar(dive.scale)
+          .add(dive.offset);
+        const params = {
+          p0: p.x,
+          p1: p.y,
+          p2: p.z,
+          p3: p.w,
+          iterations: fractal.uniforms.iterations.value,
+        };
+        const de = getCpuDe(engine.shape.formula);
+        // Warp-adjusted (like the dive's own probes) so it stays truthful under warp.
+        const raw = dive.warp
+          ? warpCpuDe((x, y, z) => de(x, y, z, params), dive.warp, f.x, f.y, f.z)
+          : de(f.x, f.y, f.z, params);
+        return raw / dive.scale - dive.growthMargin;
+      },
+      // Single teardown path (HMR, embedding, tests): stops the loop, drops the resize listener,
+      // and releases the GPU resources the engine owns.
+      teardown: (): void => engine.teardown(),
+    };
+  }
 }
 
 registerServiceWorker();

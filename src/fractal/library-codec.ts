@@ -288,11 +288,13 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
 /**
  * Bring an imported look into safe ranges, mirroring `clampShapeToRegistry` on the shape
  * side: an envId from a different set falls back to the default (ADR-0009); light, ambient,
- * and sky numerics are clamped to the same ranges the UI sliders enforce (kept in sync with
- * LightingSection.vue); and a degenerate zero-length direction is replaced. Without this a
- * crafted/corrupt look file (intensity: -5, ambient: 1e9, direction: [0,0,0]) imports
- * "successfully" but renders black or with absurd lighting. Periodic angles (azimuth, yaw)
- * are left alone - they wrap rather than break.
+ * sky, palette, material, lens, and effects numerics are clamped to the same ranges the UI
+ * sliders enforce (kept in sync with LightingSection/MaterialSection/CameraLensSection/
+ * EffectsSection/GrowthSection.vue); and a degenerate zero-length direction is replaced.
+ * Without this a crafted/corrupt look file (intensity: -5, ambient: 1e9, direction: [0,0,0],
+ * ior: 1e9, fog.density: 1e9, growth.length: 1e6 - which also perturbs the dive march) imports
+ * "successfully" but renders black, locks up, or with absurd lighting. Periodic angles
+ * (azimuth, yaw) are left alone - they wrap rather than break.
  */
 export function clampLookToEnvironments(look: Look): Look {
   const envId = ENVIRONMENTS.some((env) => env.id === look.sky.envId)
@@ -309,9 +311,11 @@ export function clampLookToEnvironments(look: Look): Look {
       direction: (dirLen > 1e-6 ? light.direction : [0.48, 0.72, 0.42]) as [number, number, number],
     };
   });
-  // Grade numerics are schema-validated only as `finite`; a crafted file with exposure: 1e9
-  // or a negative bloom imports cleanly and renders an unusable image. Clamp to the same
-  // ranges the GradeSection/EffectsSection sliders enforce (kept in sync with those).
+  // Grade/palette, material, lens, and effects numerics are schema-validated only as `finite`;
+  // a crafted file with exposure: 1e9, ior: 1e9, a negative bloom, or growth.length: 1e6 (which
+  // also feeds dive.growthMargin and perturbs the collision march) imports cleanly and renders
+  // an unusable image or locks the tab. These never reach a UI slider - they only arrive via
+  // import/localStorage - so clamp each to the same range its slider enforces (kept in sync).
   const p = look.palette;
   const palette = {
     ...p,
@@ -322,11 +326,75 @@ export function clampLookToEnvironments(look: Look): Look {
     bloomRadius: clamp(p.bloomRadius, 0, 1),
     bloomThreshold: clamp(p.bloomThreshold, 0, 1.5),
   };
+  const m = look.material;
+  const material = {
+    ...m,
+    roughness: clamp(m.roughness, 0.02, 1),
+    specular: clamp(m.specular, 0, 1),
+    translucency: clamp(m.translucency, 0, 0.9),
+    ior: clamp(m.ior, 1, 2.5),
+    emissionStrength: clamp(m.emissionStrength, 0, 8),
+  };
+  const lens = {
+    aperture: clamp(look.lens.aperture, 0, 0.14),
+    chromaticAberration: clamp(look.lens.chromaticAberration, 0, 0.025),
+  };
+  const fx = look.effects;
+  // Pocket/altitude fields are optional; clamp them in place only when present so an absent
+  // field stays absent (exactOptionalPropertyTypes), rather than materializing as `undefined`.
+  const fog = {
+    ...fx.fog,
+    density: clamp(fx.fog.density, 0, 0.15),
+    height: clamp(fx.fog.height, 0.1, 6),
+    anisotropy: clamp(fx.fog.anisotropy, -0.9, 0.9),
+  };
+  if (fog.level !== undefined) fog.level = clamp(fog.level, -4, 4);
+  if (fog.pocketX !== undefined) fog.pocketX = clamp(fog.pocketX, -6, 6);
+  if (fog.pocketY !== undefined) fog.pocketY = clamp(fog.pocketY, -6, 6);
+  if (fog.pocketZ !== undefined) fog.pocketZ = clamp(fog.pocketZ, 0, 12);
+  if (fog.pocketRadius !== undefined) fog.pocketRadius = clamp(fog.pocketRadius, 0.2, 10);
+  if (fog.pocketEdge !== undefined) fog.pocketEdge = clamp(fog.pocketEdge, 0, 1);
+  const effects = {
+    fog,
+    glow: {
+      ...fx.glow,
+      strength: clamp(fx.glow.strength, 0, 2),
+      radius: clamp(fx.glow.radius, 0.02, 1),
+    },
+    surface: {
+      ...fx.surface,
+      iridescence: clamp(fx.surface.iridescence, 0, 1),
+      filmShift: clamp(fx.surface.filmShift, 0, 1),
+      rimStrength: clamp(fx.surface.rimStrength, 0, 2),
+      microScale: clamp(fx.surface.microScale, 1, 60),
+      microRoughness: clamp(fx.surface.microRoughness, 0, 1),
+    },
+    growth: {
+      ...fx.growth,
+      length: clamp(fx.growth.length, 0, 0.15),
+      density: clamp(fx.growth.density, 5, 150),
+      sharpness: clamp(fx.growth.sharpness, 0.5, 8),
+      coverage: clamp(fx.growth.coverage, 0, 1),
+      trapBias: clamp(fx.growth.trapBias, -1, 1),
+      colorBlend: clamp(fx.growth.colorBlend, 0, 1),
+      emission: clamp(fx.growth.emission, 0, 4),
+    },
+    post: {
+      ...fx.post,
+      vignetteStrength: clamp(fx.post.vignetteStrength, 0, 1),
+      vignetteSoftness: clamp(fx.post.vignetteSoftness, 0.05, 1),
+      grainStrength: clamp(fx.post.grainStrength, 0, 0.25),
+      distortion: clamp(fx.post.distortion, -1, 1),
+    },
+  };
   return {
     ...look,
     ambient: clamp(look.ambient, 0, 0.02),
     lights,
     palette,
+    material,
+    lens,
+    effects,
     sky: {
       ...look.sky,
       envId,

@@ -19,10 +19,15 @@ import { PostChain } from "./post";
 import { PreviewQuality, initialPreviewScale } from "./preview-quality";
 import { Stage } from "./stage";
 
-// Watchdog: if an export run makes no sample progress for this long, abandon it rather than
-// hang the live viewport forever (see exportImage). Generous so a slow first sample on a heavy
-// formula at 8K never trips it, but bounded so a genuinely stuck run still recovers.
-const EXPORT_STALL_MS = 20000;
+// Export watchdog floor (see exportImage): the minimum no-progress window before a run is
+// abandoned. The live threshold adapts upward from here to a multiple of the slowest sample
+// actually observed, so a heavy formula at 8K - where one sample can legitimately take far
+// longer than this - is never mistaken for a stall. This floor only has to cover the FIRST
+// sample, before any per-sample cost has been measured; hence it is generous on its own.
+const EXPORT_STALL_MS = 60000;
+// Once at least one sample has completed, treat "no progress for longer than this multiple of
+// the slowest sample seen" as a stall - adaptive headroom over real per-sample cost.
+const EXPORT_STALL_SAMPLE_FACTOR = 4;
 
 function makeSampleTarget(width: number, height: number): THREE.RenderTarget {
   return new THREE.RenderTarget(width, height, {
@@ -320,6 +325,10 @@ export class RenderEngine {
       sampleCap: this.state.sampleCap,
       denoise: this.state.denoise,
     };
+    // A non-positive cap (corrupt/programmatic ExportOptions) would make the progress
+    // divide by zero (NaN) and satisfy `samples >= cap` at sample 0, resolving instantly
+    // with a blank/preview frame reported as a successful capture. Floor at 1 real sample.
+    const sampleCap = Math.max(1, Math.floor(options.sampleCap));
     try {
       // 1:1 device pixels so the captured buffer is exactly the requested resolution.
       this.renderer.setPixelRatio(1);
@@ -328,7 +337,7 @@ export class RenderEngine {
       // Kick off a fresh converged run at the export settings. resetAccumulation clears
       // `rendering`, so re-arm it after; the loop accumulates one sample per frame.
       this.state.denoise = options.denoise;
-      this.state.sampleCap = options.sampleCap;
+      this.state.sampleCap = sampleCap;
       this.resetAccumulation();
       this.state.rendering = true;
 
@@ -340,19 +349,29 @@ export class RenderEngine {
       await new Promise<void>((resolve) => {
         let lastSample = -1;
         let lastProgressAt = performance.now();
+        // Largest inter-sample gap seen so far; the stall budget is a multiple of this, so a
+        // legitimately heavy sample raises the bar rather than tripping the watchdog.
+        let slowestSampleMs = 0;
         const poll = (): void => {
-          onProgress?.(Math.min(1, this.sampleIndexValue / options.sampleCap));
+          onProgress?.(Math.min(1, this.sampleIndexValue / sampleCap));
+          const now = performance.now();
           if (this.sampleIndexValue !== lastSample) {
+            // A sample landed: fold its duration into the running max (skip the first transition,
+            // -1 -> 0, which measures nothing), then reset the no-progress clock.
+            if (lastSample >= 0) slowestSampleMs = Math.max(slowestSampleMs, now - lastProgressAt);
             lastSample = this.sampleIndexValue;
-            lastProgressAt = performance.now();
-          } else if (performance.now() - lastProgressAt > EXPORT_STALL_MS) {
+            lastProgressAt = now;
+          } else if (
+            now - lastProgressAt >
+            Math.max(EXPORT_STALL_MS, slowestSampleMs * EXPORT_STALL_SAMPLE_FACTOR)
+          ) {
             stalled = true;
           }
           if (
             this.exportCancelled ||
             this.fatalError ||
             stalled ||
-            this.sampleIndexValue >= options.sampleCap
+            this.sampleIndexValue >= sampleCap
           ) {
             resolve();
             return;
