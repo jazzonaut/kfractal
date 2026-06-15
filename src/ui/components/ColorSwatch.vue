@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
 import ColorPicker from "primevue/colorpicker";
 
 // One picker + a manual hex field beneath it. State speaks `#rrggbb`; PrimeVue's ColorPicker
@@ -9,6 +10,27 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
+
+// Dragging inside the picker emits on every pointermove, each one re-baking the LUT / repacking
+// uniforms and resetting accumulation (same churn ParamSlider coalesces). Only the last value
+// before the next frame matters, so collapse drag emits to one per rAF; the hex field
+// (commitHex) is discrete and emits straight through.
+let rafId = 0;
+let pending = "";
+
+function flushPick(): void {
+  rafId = 0;
+  emit("update:modelValue", pending);
+}
+
+function onPick(value: string): void {
+  pending = `#${value}`;
+  if (rafId === 0) rafId = requestAnimationFrame(flushPick);
+}
+
+onBeforeUnmount(() => {
+  if (rafId !== 0) cancelAnimationFrame(rafId);
+});
 
 // Accepts `#abc`, `abc`, `#aabbcc`, `aabbcc` (any case). Returns a normalized `#rrggbb`, or
 // null when the field doesn't hold a complete 3- or 6-digit hex.
@@ -29,6 +51,11 @@ function commitHex(event: Event): void {
     input.value = props.modelValue;
     return;
   }
+  // Drop any picker drag emit still queued for this frame so it can't fire after this commit.
+  if (rafId !== 0) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
   // Re-sync the DOM to canonical first: when `next === modelValue` Vue patches nothing, so the
   // field would otherwise keep the raw typed text (e.g. uppercase / 3-digit) while state holds
   // the same colour.
@@ -42,7 +69,7 @@ function commitHex(event: Event): void {
     <ColorPicker
       :model-value="modelValue.replace(/^#/, '')"
       format="hex"
-      @update:model-value="emit('update:modelValue', `#${$event}`)"
+      @update:model-value="onPick($event as string)"
     />
     <input
       type="text"

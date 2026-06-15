@@ -561,6 +561,8 @@ export class RenderEngine {
   teardown(): void {
     this.loop?.stop();
     window.removeEventListener("resize", this.onWindowResize);
+    // A debounced resize may still be queued; drop it so it can't fire on disposed targets.
+    if (this.resizeTimer !== 0) clearTimeout(this.resizeTimer);
     this.controls.dispose();
     this.fractal.dispose();
     this.accumulation.dispose();

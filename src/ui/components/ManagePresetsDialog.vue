@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import Button from "primevue/button";
 import Dialog from "primevue/dialog";
 import { useToast } from "primevue/usetoast";
@@ -58,6 +58,10 @@ const empty = computed(() =>
 // Two-click inline delete confirm: the label swaps to "Confirm?" and reverts after 3 s.
 const confirmDeleteKey = ref("");
 let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+
+// The confirm timer can still be pending when the dialog's owner is torn down; clear it so
+// it doesn't fire on an unmounted instance.
+onBeforeUnmount(() => clearTimeout(confirmTimer));
 
 function fail(result: { ok: boolean; error?: string }): void {
   if (!result.ok) {

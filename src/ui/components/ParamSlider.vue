@@ -54,6 +54,12 @@ function commitNumber(event: Event): void {
     return;
   }
   const next = normalize(value);
+  // Drop any drag emit still queued for this frame: it carries the pre-edit slider value and
+  // would fire after this commit, reverting the typed entry.
+  if (rafId !== 0) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
   // Re-sync the DOM to the canonical value first: when `next === modelValue` (e.g. typing
   // 999 into a field already at max) Vue patches nothing, so the input would otherwise keep
   // the raw typed text while state holds the old value.

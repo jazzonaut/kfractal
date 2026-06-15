@@ -70,7 +70,7 @@ const mandelbulb: CpuDe = (cx, cy, cz, { p0, iterations }) => {
   for (let i = 0; i < iterations; i += 1) {
     r = Math.sqrt(zx * zx + zy * zy + zz * zz);
     if (r > 2) break;
-    const rr = Math.max(r, 1e-9);
+    const rr = Math.max(r, 1e-6);
     const theta = Math.acos(clamp(zz / rr, -1, 1)) * p0;
     const phi = Math.atan2(zy, zx) * p0;
     const zr = Math.pow(rr, p0);
@@ -80,7 +80,7 @@ const mandelbulb: CpuDe = (cx, cy, cz, { p0, iterations }) => {
     zy = zr * st * Math.sin(phi) + cy;
     zz = zr * Math.cos(theta) + cz;
   }
-  return (0.25 * Math.log(Math.max(r, 1e-9)) * r) / dr;
+  return (0.25 * Math.log(Math.max(r, 1e-6)) * r) / dr;
 };
 
 const apollonian: CpuDe = (cx, cy, cz, { p0, iterations }) => {

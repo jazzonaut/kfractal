@@ -60,7 +60,8 @@ const sectionIds = computed(() => sections.value.map((s) => s.id));
 
   <aside
     v-else
-    class="pointer-events-auto fixed bottom-12 right-0 top-0 flex w-[380px] flex-col border-l border-white/10 bg-surface-950/70 backdrop-blur-xl"
+    class="pointer-events-auto fixed bottom-12 right-0 top-0 flex flex-col border-l border-white/10 bg-surface-950/70 backdrop-blur-xl"
+    :style="{ width: `${PANEL_WIDTH}px` }"
     data-testid="inspector"
   >
     <header class="flex items-center justify-between px-4 pb-2 pt-3">

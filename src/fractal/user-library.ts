@@ -1,4 +1,6 @@
 import {
+  clampLookToEnvironments,
+  clampShapeToRegistry,
   migrateLookLightV4,
   userLookSchema,
   userPresetSchema,
@@ -94,10 +96,22 @@ export function loadUserLibrary(): UserLibrary {
     console.warn(`KFractal: ignoring ${STORAGE_KEY} blob with unknown version.`);
     return EMPTY();
   }
+  // Clamp on load to the same registry/environment ranges the file-import path enforces
+  // (library-codec.parseLibraryFile): both feed the GPU, so a stored blob written by an older
+  // build or hand-edited must not push out-of-range values straight to a uniform slot. The
+  // clamp helpers preserve the createdAt/updatedAt stamps via spread.
   return {
-    shapes: parseList<UserShape>(candidate.shapes, userShapeSchema, "shape"),
-    looks: parseList<UserLook>(looks, userLookSchema, "look"),
-    presets: parseList<UserPreset>(presets, userPresetSchema, "preset"),
+    shapes: parseList<UserShape>(candidate.shapes, userShapeSchema, "shape").map(
+      (shape) => clampShapeToRegistry(shape) as UserShape,
+    ),
+    looks: parseList<UserLook>(looks, userLookSchema, "look").map(
+      (look) => clampLookToEnvironments(look) as UserLook,
+    ),
+    presets: parseList<UserPreset>(presets, userPresetSchema, "preset").map((preset) => ({
+      ...preset,
+      shape: clampShapeToRegistry(preset.shape),
+      look: clampLookToEnvironments(preset.look),
+    })),
   };
 }
 

@@ -78,6 +78,7 @@ export function createWorkstationState(
 ): WorkstationState {
   const { shape, look } = preset;
   const library = loadUserLibrary();
+  const warp = shape.warp ?? defaultWarp();
   return reactive({
     presets: PRESETS,
     shapes: SHAPES,
@@ -171,15 +172,15 @@ export function createWorkstationState(
     paletteColorSpace: look.palette.colorSpace,
     trapScale: shape.trap.scale,
     trapPower: shape.trap.power,
-    warpTwist: (shape.warp ?? defaultWarp()).twist,
-    warpTwistAxis: (shape.warp ?? defaultWarp()).twistAxis,
-    warpBend: (shape.warp ?? defaultWarp()).bend,
-    warpBendAxis: (shape.warp ?? defaultWarp()).bendAxis,
-    warpRippleAmp: (shape.warp ?? defaultWarp()).rippleAmp,
-    warpRippleFreq: (shape.warp ?? defaultWarp()).rippleFreq,
-    warpRippleAxis: (shape.warp ?? defaultWarp()).rippleAxis,
-    warpNoiseAmp: (shape.warp ?? defaultWarp()).noiseAmp,
-    warpNoiseFreq: (shape.warp ?? defaultWarp()).noiseFreq,
+    warpTwist: warp.twist,
+    warpTwistAxis: warp.twistAxis,
+    warpBend: warp.bend,
+    warpBendAxis: warp.bendAxis,
+    warpRippleAmp: warp.rippleAmp,
+    warpRippleFreq: warp.rippleFreq,
+    warpRippleAxis: warp.rippleAxis,
+    warpNoiseAmp: warp.noiseAmp,
+    warpNoiseFreq: warp.noiseFreq,
     cameraFov: shape.camera.fov,
     resolutionWidth: width,
     resolutionHeight: height,

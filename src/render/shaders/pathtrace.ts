@@ -266,7 +266,10 @@ fn ${RENDER_SAMPLE_FN}(
   gNoiseOn = fxB.x > 0.0 || fxB.y > 0.0;
   gGrowthOn = growthP.x > 0.0;
   gWarpOn = warpP.x != 0.0 || warpP.y != 0.0 || warpP.z > 0.0 || warpQ.x > 0.0;
-  gGlowArm = gGlowOn;
+  // Only the color-producing passes (preview = mode 0, pathtrace = mode 1) consume the glow
+  // aura; the feature passes (normal/depth = 2, albedo = 3) march too but discard it, so leave
+  // their glow disarmed to skip the per-step aura integration.
+  gGlowArm = gGlowOn && mode < 1.5;
   gPixelEps = 2.0 * tanHalfFov / resolution.y * (gSurfEps / EPS_REF);
   gEpsFloor = gSurfEps * 0.05;
   gNormScale = gNormEps / max(gSurfEps, 1.0e-9);
@@ -839,13 +842,16 @@ fn sampleEnvDir(envTex: texture_2d<f32>) -> vec4<f32> {
   let dims = ENV_ALIAS_DIMS;
   let n = dims.x * dims.y;
   var cell = min(u32(rndf() * f32(n)), n - 1u);
-  let probe = loadEnvAliasCell(cell, envTex);
-  if (rndf() > probe.r) {
-    cell = decodeEnvAliasCell(probe, dims);
+  var chosen = loadEnvAliasCell(cell, envTex);
+  if (rndf() > chosen.r) {
+    cell = decodeEnvAliasCell(chosen, dims);
+    // Only the alias branch moves to a different cell, so this is the one case that needs a
+    // fresh load for the pdf; the straight-through case already has it in chosen.
+    chosen = loadEnvAliasCell(cell, envTex);
   }
   let cx = cell % dims.x;
   let cy = cell / dims.x;
-  let pdf = loadEnvAliasCell(cell, envTex).a;
+  let pdf = chosen.a;
   let cellU = rnd2f();
   let uvE = vec2<f32>(
     (f32(cx) + cellU.x) / f32(dims.x),
