@@ -32,6 +32,7 @@ const SHELL_URLS = [
   `${BASE}index.html`,
   `${BASE}manifest.webmanifest`,
   `${BASE}favicon.svg`,
+  `${BASE}icon-192.png`,
   `${BASE}icon-512.png`,
   `${BASE}apple-touch-icon.png`,
 ];
