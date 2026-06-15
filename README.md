@@ -25,12 +25,14 @@ drill into every parameter and save your own.
 - **Dual-mode rendering** — a cheap analytic **preview** (AO + soft shadow + glossy spec) while
   you interact, and a progressive multi-bounce **path tracer** that accumulates when the view
   is idle. Any input resets to the preview; an explicit Render action starts converging.
-- **Seven distance-estimator formulas** — Mandelbox, Mandelbulb, Apollonian, Menger Sponge,
-  Kaleidoscopic IFS, Quaternion Julia, and Pseudo-Kleinian. Each is raw WGSL plus a parameter
-  schema that drives the controls automatically.
+- **Seventeen distance-estimator formulas** — Mandelbox, Mandelbulb, Apollonian, Menger Sponge,
+  Kaleidoscopic IFS, Quaternion Julia, Pseudo-Kleinian, Julia Bulb, Amazing Box, Sierpinski
+  Tetrahedron, Octahedral IFS, Cross Menger, Bicomplex Julia, Sinusoidal Bulb, Bubble Sphere,
+  Sphere Sponge, and Sphere Foam. Each is raw WGSL plus a parameter schema that drives the
+  controls automatically.
 - **Shape × Look authoring** — geometry (formula, framing, march quality, orbit-trap mapping)
   and art direction (lights, sky, material, palette, effects, lens) are independent axes you
-  mix freely. 12 curated shapes × 9 curated looks → 13 curated presets out of the box.
+  mix freely. 20 curated shapes × 12 curated looks → 19 curated presets out of the box.
 - **Shape generator** — randomize or mutate shapes over each formula's parameter schema, with
   per-parameter locks, formula pinning, and adjustable variation strength.
 - **Up to 4 lights per look** — directional (soft sun at infinity) or positional (invisible

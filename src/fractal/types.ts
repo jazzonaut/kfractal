@@ -5,7 +5,17 @@ export type FractalFormulaId =
   | "menger"
   | "kifs"
   | "quatjulia"
-  | "kleinian";
+  | "kleinian"
+  | "juliabulb"
+  | "amazingbox"
+  | "sierpinski"
+  | "octahedral"
+  | "crossmenger"
+  | "bicomplex"
+  | "trigbulb"
+  | "spherepack"
+  | "mengersphere"
+  | "kleinsphere";
 
 export interface CameraPreset {
   readonly target: readonly [number, number, number];

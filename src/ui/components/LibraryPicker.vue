@@ -2,7 +2,8 @@
 import { computed } from "vue";
 import Select from "primevue/select";
 import { useController } from "../composables/use-controller";
-import type { LibraryKind } from "../../fractal/types";
+import { getFormula } from "../../fractal/registry";
+import type { FractalFormulaId, LibraryKind } from "../../fractal/types";
 
 /**
  * One grouped dropdown per library axis (ADR-0010): preset pairings, shapes, looks.
@@ -64,6 +65,9 @@ const selected = computed(() =>
     (item) => item.id === config.value.selectedId,
   ),
 );
+
+// Shape rows annotate which formula they drive, e.g. "Foam Orb (Sphere Foam)".
+const formulaName = (formula: FractalFormulaId): string => getFormula(formula).name;
 </script>
 
 <template>
@@ -85,7 +89,12 @@ const selected = computed(() =>
     >
       <template #option="{ option }">
         <div class="flex max-w-64 flex-col gap-0.5">
-          <span class="text-sm">{{ option.name }}</span>
+          <span class="text-sm">
+            {{ option.name }}
+            <span v-if="kind === 'shape' && option.formula" class="text-muted-color">
+              ({{ formulaName(option.formula) }})
+            </span>
+          </span>
           <span class="truncate text-xs text-muted-color">{{ option.description }}</span>
         </div>
       </template>

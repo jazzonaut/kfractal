@@ -1,6 +1,6 @@
 import { defaultEffects } from "./effects-defaults";
 import { DEFAULT_SKY } from "./environments";
-import type { LightSource, Look, PaletteSettings } from "./types";
+import type { EffectsSettings, LightSource, Look, PaletteSettings } from "./types";
 
 /** A linear/RGB palette ramp with the given colours spread evenly across 0..1. */
 function evenRamp(
@@ -32,6 +32,12 @@ function keyLight(l: {
   };
 }
 
+/** A subtle thin-film iridescence accent on top of the all-off defaults (for Oil Slick). */
+function iridescentEffects(): EffectsSettings {
+  const base = defaultEffects();
+  return { ...base, surface: { ...base.surface, iridescence: 0.3, filmShift: 0.5 } };
+}
+
 /** Starting point for a light added from the UI: a small white positional fill. */
 export function defaultNewLight(): LightSource {
   return {
@@ -52,8 +58,8 @@ export function defaultNewLight(): LightSource {
  * character. A look never moves the camera or changes geometry; any look can be paired
  * with any shape.
  *
- * Values are copied verbatim from the pre-split presets so every curated pairing in
- * `presets.ts` reproduces its original image exactly.
+ * The set is tuned for variety: dark, hued palette bases and restrained bloom keep
+ * contrast high so the geometry reads, and no two looks sit in the same hue/mood.
  */
 
 export const AMETHYST_TIDE: Look = {
@@ -89,27 +95,27 @@ export const AMETHYST_TIDE: Look = {
 export const WARM_IVORY: Look = {
   id: "warm-ivory",
   name: "Warm Ivory",
-  description: "Soft warm key over pale carved-ivory tones, near-black fill.",
+  description: "High-contrast carved marble: cool umber shadows into warm ivory highlights.",
   lens: { aperture: 0.0, chromaticAberration: 0.013 },
   ambient: 0.002,
-  lights: [keyLight({ direction: [0.35, 0.75, 0.5], size: 0.3, intensity: 1.9, color: "#fff0d8" })],
+  lights: [keyLight({ direction: [0.35, 0.75, 0.5], size: 0.3, intensity: 1.7, color: "#fff0d8" })],
   sky: { ...DEFAULT_SKY },
   material: {
     roughness: 0.6,
-    specular: 0.35,
+    specular: 0.4,
     translucency: 0.18,
-    ior: 1.4,
+    ior: 1.45,
     emissionStrength: 0,
     emissionColor: "#000000",
   },
   palette: {
-    ...evenRamp(["#241a10", "#b5a37d", "#f0e8cf"]),
-    saturation: 0.82,
-    exposure: 1.12,
-    contrast: 1.1,
-    bloomStrength: 0.25,
+    ...evenRamp(["#0099f2", "#7a5a3a", "#cdb487", "#fff6e2"]),
+    saturation: 0.77,
+    exposure: 1.0,
+    contrast: 1.5,
+    bloomStrength: 0.22,
     bloomRadius: 0.45,
-    bloomThreshold: 0.6,
+    bloomThreshold: 0.7,
   },
   effects: defaultEffects(),
 };
@@ -117,35 +123,56 @@ export const WARM_IVORY: Look = {
 export const INNER_FIRE: Look = {
   id: "inner-fire",
   name: "Inner Fire",
-  description: "Dim amber key; the surface glows white-hot from inside.",
+  description: "Molten body: near-black crust into a white-hot emissive core.",
   lens: { aperture: 0.0, chromaticAberration: 0.012 },
   ambient: 0.001,
-  lights: [keyLight({ direction: [0.3, 0.8, 0.35], size: 0.3, intensity: 0.7, color: "#ffd9a8" })],
+  lights: [keyLight({ direction: [0.3, 0.8, 0.35], size: 0.3, intensity: 1.0, color: "#ffd9a8" })],
   sky: { ...DEFAULT_SKY },
   material: {
     roughness: 0.42,
     specular: 0.5,
     translucency: 0.0,
     ior: 1.5,
-    emissionStrength: 2.2,
-    emissionColor: "#fff3c4",
+    emissionStrength: 0.8,
+    emissionColor: "#ffce86",
   },
   palette: {
-    ...evenRamp(["#140602", "#703a10", "#ffd584"]),
-    saturation: 0.85,
-    exposure: 0.95,
-    contrast: 1.2,
-    bloomStrength: 0.6,
-    bloomRadius: 0.5,
-    bloomThreshold: 0.45,
+    ...evenRamp(["#0a0200", "#6e1c06", "#e0631a", "#fff0c0"]),
+    saturation: 0.95,
+    exposure: 0.92,
+    contrast: 1.32,
+    bloomStrength: 0.45,
+    bloomRadius: 0.55,
+    bloomThreshold: 0.55,
   },
-  effects: defaultEffects(),
+  effects: {
+    ...defaultEffects(),
+    glow: { strength: 0.4, radius: 0.3, usePalette: true, color: "#ff8a3c" },
+    surface: {
+      iridescence: 0,
+      filmShift: 0.3,
+      rimStrength: 1.3,
+      microScale: 12,
+      microRoughness: 0,
+    },
+    growth: {
+      length: 0.05,
+      density: 60,
+      mode: "crystals",
+      sharpness: 4,
+      coverage: 0.7,
+      trapBias: 0.2,
+      color: "#ff6a1a",
+      colorBlend: 0.7,
+      emission: 1.2,
+    },
+  },
 };
 
 export const MOSSY_BACKLIGHT: Look = {
   id: "mossy-backlight",
   name: "Mossy Backlight",
-  description: "Bright backlit key through waxy translucency; olive tones, bright pores.",
+  description: "Waxy backlit translucency; dark forest shadow into glowing lime pores.",
   lens: { aperture: 0.0, chromaticAberration: 0.012 },
   ambient: 0.006,
   lights: [keyLight({ direction: [0.3, 0.85, 0.3], size: 0.35, intensity: 3.0, color: "#fff8e0" })],
@@ -153,16 +180,16 @@ export const MOSSY_BACKLIGHT: Look = {
   material: {
     roughness: 0.35,
     specular: 0.55,
-    translucency: 0.4,
+    translucency: 0.42,
     ior: 1.5,
     emissionStrength: 0,
     emissionColor: "#000000",
   },
   palette: {
-    ...evenRamp(["#1a1505", "#5c6e22", "#d3e26b"]),
+    ...evenRamp(["#06140a", "#2f7a2e", "#9bd83a", "#eaffb0"]),
     saturation: 1.0,
-    exposure: 1.25,
-    contrast: 1.1,
+    exposure: 1.05,
+    contrast: 1.18,
     bloomStrength: 0.3,
     bloomRadius: 0.45,
     bloomThreshold: 0.55,
@@ -173,27 +200,27 @@ export const MOSSY_BACKLIGHT: Look = {
 export const WET_JADE: Look = {
   id: "wet-jade",
   name: "Wet Jade",
-  description: "Single hard key on a wet, glossy green surface.",
+  description: "Cold turquoise jewel; deep teal shadow into a wet aqua sheen.",
   lens: { aperture: 0.0, chromaticAberration: 0.008 },
   ambient: 0.004,
-  lights: [keyLight({ direction: [0.5, 0.65, 0.4], size: 0.2, intensity: 2.4, color: "#f2fff4" })],
+  lights: [keyLight({ direction: [0.5, 0.65, 0.4], size: 0.18, intensity: 2.4, color: "#f2fffb" })],
   sky: { ...DEFAULT_SKY },
   material: {
-    roughness: 0.25,
-    specular: 0.85,
-    translucency: 0.1,
+    roughness: 0.2,
+    specular: 0.9,
+    translucency: 0.06,
     ior: 1.7,
     emissionStrength: 0,
     emissionColor: "#000000",
   },
   palette: {
-    ...evenRamp(["#07140c", "#256b46", "#8fd470"]),
-    saturation: 0.95,
-    exposure: 1.05,
-    contrast: 1.1,
-    bloomStrength: 0.25,
+    ...evenRamp(["#04221f", "#0e7068", "#2fd0b8", "#c6fff0"]),
+    saturation: 0.98,
+    exposure: 1.3,
+    contrast: 1.25,
+    bloomStrength: 0.3,
     bloomRadius: 0.4,
-    bloomThreshold: 0.65,
+    bloomThreshold: 0.6,
   },
   effects: defaultEffects(),
 };
@@ -240,7 +267,7 @@ export const DESERT_SUN: Look = {
 export const GILDED_HAZE: Look = {
   id: "gilded-haze",
   name: "Gilded Haze",
-  description: "Golden procedural dusk environment over warm plaster pinks.",
+  description: "Rose-copper dusk; wine shadows into warm coral and pale peach.",
   lens: { aperture: 0.0, chromaticAberration: 0.012 },
   ambient: 0.002,
   lights: [keyLight({ direction: [0.35, 0.75, 0.5], size: 0.3, intensity: 0.7, color: "#ffe2c2" })],
@@ -255,18 +282,18 @@ export const GILDED_HAZE: Look = {
     yaw: 0,
   },
   material: {
-    roughness: 0.55,
-    specular: 0.4,
-    translucency: 0.15,
+    roughness: 0.5,
+    specular: 0.45,
+    translucency: 0.12,
     ior: 1.45,
     emissionStrength: 0,
     emissionColor: "#000000",
   },
   palette: {
-    ...evenRamp(["#221318", "#c99a8a", "#ffd9b0"]),
+    ...evenRamp(["#2a1418", "#b85e54", "#eaa878", "#ffe8d0"]),
     saturation: 0.9,
-    exposure: 1.0,
-    contrast: 1.1,
+    exposure: 1.12,
+    contrast: 1.12,
     bloomStrength: 0.3,
     bloomRadius: 0.45,
     bloomThreshold: 0.6,
@@ -277,13 +304,13 @@ export const GILDED_HAZE: Look = {
 export const EMBER_STORM: Look = {
   id: "ember-storm",
   name: "Ember Storm",
-  description: "A burning procedural sky with a faint inner ember glow.",
+  description: "Smouldering storm; smoky purple-black into deep ember and hot orange.",
   lens: { aperture: 0.0, chromaticAberration: 0.012 },
   ambient: 0.001,
-  lights: [keyLight({ direction: [0.3, 0.8, 0.35], size: 0.3, intensity: 0.3, color: "#ffd9a8" })],
+  lights: [keyLight({ direction: [0.3, 0.8, 0.35], size: 0.3, intensity: 0.3, color: "#ffc89a" })],
   sky: {
     mode: "envmap",
-    intensity: 0.8,
+    intensity: 0.5,
     sunElevation: 35,
     sunAzimuth: 0,
     turbidity: 3,
@@ -296,31 +323,42 @@ export const EMBER_STORM: Look = {
     specular: 0.5,
     translucency: 0.0,
     ior: 1.5,
-    emissionStrength: 0.9,
-    emissionColor: "#ff9540",
+    emissionStrength: 1.1,
+    emissionColor: "#ff7a2a",
   },
   palette: {
-    ...evenRamp(["#0b0302", "#38130a", "#e8a05a"]),
-    saturation: 0.8,
-    exposure: 0.95,
-    contrast: 1.18,
-    bloomStrength: 0.4,
-    bloomRadius: 0.5,
-    bloomThreshold: 0.6,
+    ...evenRamp(["#0c0614", "#6a164a", "#d2401a", "#ffd24a"]),
+    saturation: 0.95,
+    exposure: 1.05,
+    contrast: 1.28,
+    bloomStrength: 0.5,
+    bloomRadius: 0.55,
+    bloomThreshold: 0.5,
   },
-  effects: defaultEffects(),
+  effects: {
+    ...defaultEffects(),
+    fog: { density: 0.035, height: 1.5, anisotropy: 0.65, color: "#c0401a" },
+    glow: { strength: 0.5, radius: 0.3, usePalette: true, color: "#ff8a3c" },
+    surface: {
+      iridescence: 0,
+      filmShift: 0.3,
+      rimStrength: 1.1,
+      microScale: 12,
+      microRoughness: 0,
+    },
+  },
 };
 
 export const MOONLIT_LANTERNS: Look = {
   id: "moonlit-lanterns",
   name: "Moonlit Lanterns",
-  description: "Moonless midnight environment; warm emissive pores carry the light.",
+  description: "Calm moonless blue; a soft warm lantern glow from the pores.",
   lens: { aperture: 0.0, chromaticAberration: 0.012 },
   ambient: 0.001,
-  lights: [keyLight({ direction: [0.3, 0.85, 0.3], size: 0.4, intensity: 0.25, color: "#bcd4ff" })],
+  lights: [keyLight({ direction: [0.3, 0.85, 0.3], size: 0.4, intensity: 0.5, color: "#aacbff" })],
   sky: {
     mode: "envmap",
-    intensity: 1.0,
+    intensity: 0.2,
     sunElevation: 35,
     sunAzimuth: 0,
     turbidity: 3,
@@ -333,29 +371,125 @@ export const MOONLIT_LANTERNS: Look = {
     specular: 0.5,
     translucency: 0.3,
     ior: 1.5,
-    emissionStrength: 3.2,
+    emissionStrength: 0.5,
     emissionColor: "#ffc97f",
   },
   palette: {
-    ...evenRamp(["#050a14", "#1c3a55", "#9fd0ff"]),
-    saturation: 1.0,
-    exposure: 1.2,
-    contrast: 1.12,
-    bloomStrength: 0.7,
+    ...evenRamp(["#03060e", "#143049", "#5b86b8", "#cfe6ff"]),
+    saturation: 0.85,
+    exposure: 1.25,
+    contrast: 1.4,
+    bloomStrength: 0.45,
     bloomRadius: 0.5,
-    bloomThreshold: 0.4,
+    bloomThreshold: 0.55,
+  },
+  effects: {
+    ...defaultEffects(),
+    glow: { strength: 0.4, radius: 0.3, usePalette: false, color: "#ffc97f" },
+  },
+};
+
+export const GLACIER_STEEL: Look = {
+  id: "glacier-steel",
+  name: "Glacier Steel",
+  description: "Near-monochrome cold steel; matte metal that reads pure form.",
+  lens: { aperture: 0.0, chromaticAberration: 0.006 },
+  ambient: 0.003,
+  lights: [keyLight({ direction: [0.4, 0.7, 0.5], size: 0.28, intensity: 1.7, color: "#eaf2ff" })],
+  sky: { ...DEFAULT_SKY },
+  material: {
+    roughness: 0.3,
+    specular: 0.7,
+    translucency: 0.0,
+    ior: 1.5,
+    emissionStrength: 0,
+    emissionColor: "#000000",
+  },
+  palette: {
+    ...evenRamp(["#04070e", "#22354e", "#5a86b8", "#dce9fb"]),
+    saturation: 0.68,
+    exposure: 1.14,
+    contrast: 1.8,
+    bloomStrength: 0.25,
+    bloomRadius: 0.4,
+    bloomThreshold: 0.65,
   },
   effects: defaultEffects(),
+};
+
+export const SYNTH_NEON: Look = {
+  id: "synth-neon",
+  name: "Synth Neon",
+  description: "Electric magenta-to-cyan on black; heavy glow, high saturation.",
+  lens: { aperture: 0.0, chromaticAberration: 0.02 },
+  ambient: 0.002,
+  lights: [keyLight({ direction: [0.4, 0.7, 0.45], size: 0.25, intensity: 1.4, color: "#ffffff" })],
+  sky: { ...DEFAULT_SKY },
+  material: {
+    roughness: 0.3,
+    specular: 0.7,
+    translucency: 0.0,
+    ior: 1.5,
+    emissionStrength: 0,
+    emissionColor: "#000000",
+  },
+  palette: {
+    ...evenRamp(["#05010a", "#5a17a8", "#ff2bd6", "#28f0ff"]),
+    saturation: 1.12,
+    exposure: 1.05,
+    contrast: 1.05,
+    bloomStrength: 0.65,
+    bloomRadius: 0.6,
+    bloomThreshold: 0.38,
+  },
+  effects: {
+    ...defaultEffects(),
+    fog: { density: 0.025, height: 1.5, anisotropy: 0.5, color: "#2a0a4a" },
+    glow: { strength: 0.6, radius: 0.3, usePalette: true, color: "#ff2bd6" },
+  },
+};
+
+export const OIL_SLICK: Look = {
+  id: "oil-slick",
+  name: "Oil Slick",
+  description: "Dark glossy petrol shell banded blue-purple-teal like an oil-film sheen.",
+  lens: { aperture: 0.0, chromaticAberration: 0.014 },
+  ambient: 0.004,
+  lights: [
+    keyLight({ direction: [0.45, 0.7, 0.45], size: 0.22, intensity: 2.2, color: "#ffffff" }),
+  ],
+  sky: { ...DEFAULT_SKY },
+  material: {
+    roughness: 0.15,
+    specular: 0.9,
+    translucency: 0.0,
+    ior: 1.6,
+    emissionStrength: 0,
+    emissionColor: "#000000",
+  },
+  palette: {
+    ...evenRamp(["#28286a", "#2f6ad0", "#b84ac8", "#46f0d6"]),
+    saturation: 0.95,
+    exposure: 1.5,
+    contrast: 1.2,
+    bloomStrength: 0.4,
+    bloomRadius: 0.45,
+    bloomThreshold: 0.5,
+  },
+  effects: iridescentEffects(),
 };
 
 export const LOOKS: readonly Look[] = [
   AMETHYST_TIDE,
   WARM_IVORY,
-  INNER_FIRE,
-  MOSSY_BACKLIGHT,
   WET_JADE,
+  MOSSY_BACKLIGHT,
   DESERT_SUN,
   GILDED_HAZE,
+  INNER_FIRE,
   EMBER_STORM,
   MOONLIT_LANTERNS,
+  GLACIER_STEEL,
+  SYNTH_NEON,
+  OIL_SLICK,
 ];

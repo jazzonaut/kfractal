@@ -1,12 +1,22 @@
 import { FORMULAS, getFormula } from "./registry";
 import {
+  AMAZING_SPIRE,
+  BICOMPLEX_DRIFT,
   BLOOM_BULB,
   BUBBLE_FOAM,
+  BUBBLE_ORB,
+  CROSS_VAULT,
+  DIAMOND_LATTICE,
+  FOAM_ORB,
+  FROZEN_BLOOM,
   KLEINIAN_SANCTUM,
   LATTICE_BASTION,
   REEF_SPIRES,
+  SPONGE_BALL,
   TAFFY_BLOOM,
+  TETRA_GASKET,
   THORN_RELIQUARY,
+  WISP_BLOOM,
 } from "./shapes";
 import type { FormulaSettings, FractalFormulaId, FractalShape } from "./types";
 
@@ -40,6 +50,16 @@ export const GENERATOR_BASELINES: Record<FractalFormulaId, FractalShape> = {
   kifs: THORN_RELIQUARY,
   quatjulia: TAFFY_BLOOM,
   kleinian: KLEINIAN_SANCTUM,
+  juliabulb: FROZEN_BLOOM,
+  amazingbox: AMAZING_SPIRE,
+  sierpinski: TETRA_GASKET,
+  octahedral: DIAMOND_LATTICE,
+  crossmenger: CROSS_VAULT,
+  bicomplex: BICOMPLEX_DRIFT,
+  trigbulb: WISP_BLOOM,
+  spherepack: BUBBLE_ORB,
+  mengersphere: SPONGE_BALL,
+  kleinsphere: FOAM_ORB,
 };
 
 const clamp = (value: number, min: number, max: number): number =>
