@@ -166,7 +166,9 @@ fn formulaDE(c: vec3<f32>) -> vec2<f32> {
     p = -1.0 + 2.0 * fract(0.5 * p + vec3<f32>(0.5));
     let r2 = dot(p, p);
     trap = min(trap, r2);
-    let k = gP0 / r2;
+    // Guard the sphere inversion: after the lattice fold a sample can land exactly at a cell
+    // centre (r2 == 0). Floor it so k stays finite, matching the CPU mirror in cpu-de.ts.
+    let k = gP0 / max(r2, 1.0e-30);
     p = p * k;
     s = s * k;
   }
@@ -384,7 +386,7 @@ fn formulaDE(c: vec3<f32>) -> vec2<f32> {
       break;
     }
   }
-  return vec2<f32>(0.25 * sqrt(mz2 / md2) * log(mz2), trap);
+  return vec2<f32>(0.25 * sqrt(mz2 / md2) * log(max(mz2, 1.0e-30)), trap);
 }
 `,
 };
@@ -445,12 +447,13 @@ fn formulaDE(c: vec3<f32>) -> vec2<f32> {
     p = 2.0 * clamp(p, -csize, csize) - p;
     let r2 = dot(p, p);
     trap = min(trap, r2);
-    let k = max(gP3 / r2, 1.0);
+    let k = max(gP3 / max(r2, 1.0e-30), 1.0);
     p = p * k;
     dr = dr * k;
   }
   let rxy = length(p.xy);
-  let d = max(rxy - 0.92784, abs(rxy * p.z) / length(p)) / dr;
+  // Floor both denominators so the estimator stays finite at p == 0, matching cpu-de.ts.
+  let d = max(rxy - 0.92784, abs(rxy * p.z) / max(length(p), 1.0e-30)) / dr;
   // 0.6 safety factor: this DE overestimates near the inversion seams.
   return vec2<f32>(0.6 * d, trap);
 }

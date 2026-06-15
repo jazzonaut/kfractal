@@ -107,13 +107,12 @@ async function main(): Promise<void> {
   const initialPreset = PRESETS[0];
   if (!initialPreset) throw new Error("KFractal needs at least one preset.");
 
+  // Assigned once the engine exists (below); the device-lost callback may fire at any later
+  // point and routes through here so it can both stop the engine loop and surface the prompt.
+  let handleDeviceLost: ((info: GPUDeviceLostInfo) => void) | undefined;
   let renderer: THREE.WebGPURenderer;
   try {
-    renderer = await createRenderer(container, (info) => {
-      showFatal(
-        `The graphics device was lost${info.message ? ` (${info.message})` : ""}. Reload the page to continue.`,
-      );
-    });
+    renderer = await createRenderer(container, (info) => handleDeviceLost?.(info));
   } catch (error) {
     showFatal(
       `KFractal could not start the WebGPU renderer: ${error instanceof Error ? error.message : "unknown error"}.`,
@@ -149,6 +148,15 @@ async function main(): Promise<void> {
     },
     onFatal: showFatal,
   });
+  // Now the engine exists: a device loss stops its frame loop (so it can't spam the dead
+  // device) before surfacing the unrecoverable-reset prompt.
+  handleDeviceLost = (info): void => {
+    engine.notifyDeviceLost();
+    showFatal(
+      `The graphics device was lost${info.message ? ` (${info.message})` : ""}. Reload the page to continue.`,
+    );
+  };
+
   const { stage, fractal, dive } = engine;
   const resetAccumulation = (): void => engine.resetAccumulation();
 

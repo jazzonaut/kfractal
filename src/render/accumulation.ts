@@ -19,7 +19,8 @@ function makeTarget(width: number, height: number): THREE.RenderTarget {
 }
 
 /**
- * Progressive accumulation (ADR-0003): a ping-pong pair of half-float targets blended by
+ * Progressive accumulation (ADR-0003): a ping-pong pair of float32 targets (see makeTarget -
+ * fp16 stalls convergence) blended by
  * `mix(prev, sample, 1/(n+1))`, so successive path-trace samples converge to their mean.
  * Reset is implicit - sample 0 uses blend factor 1.0, ignoring stale history.
  */

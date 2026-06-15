@@ -628,6 +628,10 @@ export class FractalPass {
   }
 
   setMode(mode: number): void {
+    // The path-trace loop calls this every sample; skip the redundant uniform write and
+    // material reassignment when the mode is unchanged. Formula swaps go through setFormula,
+    // which re-syncs the material itself, so guarding on mode alone is safe.
+    if (this.uniforms.mode.value === mode) return;
     this.uniforms.mode.value = mode;
     // Preview and path-trace/feature passes ride different pipelines; swap the mesh to the
     // one this mode needs so a preview frame never touches (or compiles) the heavy material.

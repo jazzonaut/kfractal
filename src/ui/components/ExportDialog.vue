@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Button from "primevue/button";
 import Dialog from "primevue/dialog";
 import InputNumber from "primevue/inputnumber";
@@ -95,6 +95,12 @@ watch(
     filename.value = `kfractal-${state.selectedPresetId || state.selectedShapeId || "still"}`;
   },
 );
+
+// If we're torn down (HMR, app teardown) with an export still running, abort it so the engine
+// isn't left pinned in export mode with the live viewport frozen and no way to recover.
+onBeforeUnmount(() => {
+  if (exporting.value) controller.cancelExport();
+});
 
 async function runExport(): Promise<void> {
   if (!valid.value || exporting.value) return;

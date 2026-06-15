@@ -19,6 +19,11 @@ import { PostChain } from "./post";
 import { PreviewQuality, initialPreviewScale } from "./preview-quality";
 import { Stage } from "./stage";
 
+// Watchdog: if an export run makes no sample progress for this long, abandon it rather than
+// hang the live viewport forever (see exportImage). Generous so a slow first sample on a heavy
+// formula at 8K never trips it, but bounded so a genuinely stuck run still recovers.
+const EXPORT_STALL_MS = 20000;
+
 function makeSampleTarget(width: number, height: number): THREE.RenderTarget {
   return new THREE.RenderTarget(width, height, {
     type: THREE.FloatType,
@@ -328,14 +333,42 @@ export class RenderEngine {
       this.state.rendering = true;
 
       // Wait for the loop to reach the cap (or a cancel), reporting progress as it climbs.
+      // A watchdog guards against a run that never reaches the cap (a render error stops the
+      // loop, or accumulation stalls): without it the promise never resolves, `exporting`
+      // stays true, and the live viewport is frozen forever with no way back short of reload.
+      let stalled = false;
       await new Promise<void>((resolve) => {
+        let lastSample = -1;
+        let lastProgressAt = performance.now();
         const poll = (): void => {
           onProgress?.(Math.min(1, this.sampleIndexValue / options.sampleCap));
-          if (this.exportCancelled || this.sampleIndexValue >= options.sampleCap) resolve();
-          else requestAnimationFrame(poll);
+          if (this.sampleIndexValue !== lastSample) {
+            lastSample = this.sampleIndexValue;
+            lastProgressAt = performance.now();
+          } else if (performance.now() - lastProgressAt > EXPORT_STALL_MS) {
+            stalled = true;
+          }
+          if (
+            this.exportCancelled ||
+            this.fatalError ||
+            stalled ||
+            this.sampleIndexValue >= options.sampleCap
+          ) {
+            resolve();
+            return;
+          }
+          requestAnimationFrame(poll);
         };
         requestAnimationFrame(poll);
       });
+      // A render error stopped the loop mid-export, or it stalled with no progress: abandon
+      // the capture with a message; the `finally` restores the live view either way.
+      if (this.fatalError) {
+        return { ok: false, error: "The renderer stopped before the export finished." };
+      }
+      if (stalled) {
+        return { ok: false, error: "The export stalled before reaching the sample cap." };
+      }
       // Cancelled mid-run: abandon the capture; the `finally` restores the live view.
       if (this.exportCancelled) return { ok: false, cancelled: true };
       // One more frame so the converged branch presents the final (denoised) image
@@ -556,6 +589,15 @@ export class RenderEngine {
     }
   }
 
+  // The GPU device was lost (driver TDR, power event, adapter removal). Stop driving frames -
+  // the device is gone and every subsequent renderTo would throw - and latch the fatal flag so
+  // render() early-returns even if a frame is already mid-flight. The boot path surfaces the
+  // reload prompt; this just stops the loop from spamming the dead device. (ADR-0003.)
+  notifyDeviceLost(): void {
+    this.fatalError = true;
+    this.loop?.stop();
+  }
+
   // Single teardown path (HMR, embedding, tests). Stops the loop, drops the resize listener,
   // and releases the GPU resources whose dispose() methods exist for exactly this purpose.
   teardown(): void {
@@ -569,5 +611,14 @@ export class RenderEngine {
     this.denoiser.dispose();
     this.post.dispose();
     this.sampleRT.dispose();
+    // Release the renderer and explicitly destroy the GPU device. Without this, each HMR/embed/
+    // test re-creation leaks a whole device + swapchain + the appended canvas, and the pending
+    // `device.lost` promise keeps the device-lost closure (and the state it captures) alive for
+    // the page lifetime. device.lost ignores the "destroyed" reason, so this won't trip the
+    // device-lost prompt.
+    const device = (this.renderer.backend as { device?: GPUDevice }).device;
+    this.renderer.dispose();
+    device?.destroy();
+    this.renderer.domElement.remove();
   }
 }

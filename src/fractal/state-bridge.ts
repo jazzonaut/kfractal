@@ -79,6 +79,10 @@ export function createWorkstationState(
   const { shape, look } = preset;
   const library = loadUserLibrary();
   const warp = shape.warp ?? defaultWarp();
+  // Seed the iteration-slider bounds from the initial formula's registry range (applyShape
+  // re-syncs them on every shape change). Hard-coded literals here left the very first paint
+  // showing an out-of-range slider for any formula whose range isn't 4..24.
+  const initialIters = getFormula(shape.formula).iterations;
   return reactive({
     presets: PRESETS,
     shapes: SHAPES,
@@ -102,8 +106,8 @@ export function createWorkstationState(
     formulaId: shape.formula,
     formulaParams: [],
     iterations: shape.formulaSettings.iterations,
-    iterationsMin: 4,
-    iterationsMax: 24,
+    iterationsMin: initialIters.min,
+    iterationsMax: initialIters.max,
     roughness: look.material.roughness,
     specular: look.material.specular,
     translucency: look.material.translucency,

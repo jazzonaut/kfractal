@@ -263,8 +263,19 @@ export function clampShapeToRegistry(shape: FractalShape): FractalShape {
   const iterations = Math.round(
     Math.min(def.iterations.max, Math.max(def.iterations.min, shape.formulaSettings.iterations)),
   );
+  // The march budget is validated only as `finite` by the schema, so a crafted/corrupt file
+  // could carry surfaceEpsilon: 0 (the DE never registers a hit, so the march runs every ray
+  // to the step cap), a negative maxDistance, or maxSteps: 1e9 (a GPU/tab lockup). These never
+  // reach a UI slider - they only arrive via import/localStorage - so this is their only guard.
+  const r = shape.render;
+  const render = {
+    maxSteps: Math.round(clamp(r.maxSteps, 16, 2000)),
+    maxDistance: clamp(r.maxDistance, 1, 1000),
+    surfaceEpsilon: clamp(r.surfaceEpsilon, 1e-6, 0.1),
+    normalEpsilon: clamp(r.normalEpsilon, 1e-6, 0.1),
+  };
   const { warp: rawWarp, ...rest } = shape;
-  const clamped: FractalShape = { ...rest, formulaSettings: { iterations, values } };
+  const clamped: FractalShape = { ...rest, render, formulaSettings: { iterations, values } };
   if (rawWarp) {
     const warp = clampWarp(rawWarp);
     if (!isWarpOff(warp)) return { ...clamped, warp };
@@ -298,10 +309,24 @@ export function clampLookToEnvironments(look: Look): Look {
       direction: (dirLen > 1e-6 ? light.direction : [0.48, 0.72, 0.42]) as [number, number, number],
     };
   });
+  // Grade numerics are schema-validated only as `finite`; a crafted file with exposure: 1e9
+  // or a negative bloom imports cleanly and renders an unusable image. Clamp to the same
+  // ranges the GradeSection/EffectsSection sliders enforce (kept in sync with those).
+  const p = look.palette;
+  const palette = {
+    ...p,
+    saturation: clamp(p.saturation, 0, 1.6),
+    exposure: clamp(p.exposure, 0.35, 2.2),
+    contrast: clamp(p.contrast, 0.6, 1.8),
+    bloomStrength: clamp(p.bloomStrength, 0, 1.4),
+    bloomRadius: clamp(p.bloomRadius, 0, 1),
+    bloomThreshold: clamp(p.bloomThreshold, 0, 1.5),
+  };
   return {
     ...look,
     ambient: clamp(look.ambient, 0, 0.02),
     lights,
+    palette,
     sky: {
       ...look.sky,
       envId,

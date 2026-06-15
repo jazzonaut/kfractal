@@ -99,8 +99,11 @@ export function rollShape(args: {
     locksApply && args.locks.iterations
       ? clamp(Math.round(args.current.formulaSettings.iterations), itMin, itMax)
       : itMin + Math.floor(rng() * (itMax - itMin + 1));
+  // Deep-clone the baseline: a shallow spread would share its `camera`/`render`/`trap`/`warp`
+  // sub-objects by reference with the curated constant, so any later in-place edit of a
+  // generated shape would silently mutate the curated default for the whole session.
   return {
-    ...GENERATOR_BASELINES[resolved],
+    ...structuredClone(GENERATOR_BASELINES[resolved]),
     id: "",
     name: `Generated ${def.name}`,
     description: "",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useMediaQuery } from "@vueuse/core";
 import Button from "primevue/button";
 import Popover from "primevue/popover";
@@ -20,8 +20,19 @@ const exportOpen = ref(false);
 const menu = ref<InstanceType<typeof Popover>>();
 const bar = ref<HTMLElement>();
 
-// Keep the canvas above the bar: reserve its measured height (it never collapses).
-onMounted(() => controller.setViewportBottomInset(bar.value?.offsetHeight ?? 0));
+// Keep the canvas above the bar: reserve its measured height. A one-shot onMounted read can
+// catch a 0 height before layout settles (leaving the canvas under the bar until some later
+// inset write); a ResizeObserver re-measures once laid out and tracks any height change.
+let barObserver: ResizeObserver | undefined;
+onMounted(() => {
+  const el = bar.value;
+  if (!el) return;
+  const sync = (): void => controller.setViewportBottomInset(el.offsetHeight);
+  sync();
+  barObserver = new ResizeObserver(sync);
+  barObserver.observe(el);
+});
+onBeforeUnmount(() => barObserver?.disconnect());
 
 // A finished render keeps presenting (rendering stays true); only offer Stop while
 // samples are still accumulating.

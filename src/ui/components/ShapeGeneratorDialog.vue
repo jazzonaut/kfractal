@@ -66,6 +66,7 @@ function onSave(name: string, description: string): void {
   <Dialog
     :visible="visible"
     :modal="false"
+    :close-on-escape="true"
     position="left"
     header="Shape generator"
     class="w-[22rem]"
