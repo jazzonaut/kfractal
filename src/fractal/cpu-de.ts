@@ -578,6 +578,44 @@ const kleinsphere: CpuDe = (cx, cy, cz, { p0, p1, p2, iterations }) => {
   return Math.max(inner, shell);
 };
 
+const coral: CpuDe = (cx, cy, cz, { p0, p1, p2, p3, iterations }) => {
+  let px = cx;
+  let py = cy;
+  let pz = cz;
+  let scaleAcc = 1;
+  let d = 1e10;
+  const radius = 0.5;
+  const ca = Math.cos(p2);
+  const sa = Math.sin(p2);
+  // Polynomial smooth-min; mix(b, a, h) = b + (a - b) * h. Matches the WGSL coralSmin.
+  const smin = (a: number, b: number, k: number): number => {
+    if (k <= 1e-6) return Math.min(a, b);
+    const h = clamp(0.5 + (0.5 * (b - a)) / k, 0, 1);
+    return b + (a - b) * h - k * h * (1 - h);
+  };
+  for (let i = 0; i < iterations; i += 1) {
+    // coralRot: rotate around Y (xz) then X (yz) by p2.
+    const qx = ca * px + sa * pz;
+    let qz = -sa * px + ca * pz;
+    let qy = py;
+    const ry = ca * qy + sa * qz;
+    qz = -sa * qy + ca * qz;
+    qy = ry;
+    px = Math.abs(qx);
+    py = Math.abs(qy);
+    pz = Math.abs(qz);
+    const len = Math.sqrt(px * px + py * py + pz * pz);
+    const sph = (len - radius) / scaleAcc;
+    d = smin(d, sph, p3 / scaleAcc);
+    const off = p1 * (p0 - 1);
+    px = px * p0 - off;
+    py = py * p0 - off;
+    pz = pz * p0 - off;
+    scaleAcc = scaleAcc * p0;
+  }
+  return d;
+};
+
 const CPU_DES: Record<FractalFormulaId, CpuDe> = {
   mandelbox,
   mandelbulb,
@@ -596,6 +634,7 @@ const CPU_DES: Record<FractalFormulaId, CpuDe> = {
   spherepack,
   mengersphere,
   kleinsphere,
+  coral,
 };
 
 export function getCpuDe(id: FractalFormulaId): CpuDe {

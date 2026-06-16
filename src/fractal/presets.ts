@@ -19,6 +19,7 @@ import {
   BUBBLE_ORB,
   CAVERN_PORES,
   CITADEL_RAMPARTS,
+  CORAL_BLOOM,
   CROSS_VAULT,
   DIAMOND_LATTICE,
   FOAM_ORB,
@@ -73,6 +74,13 @@ export const PRESETS: readonly FractalPreset[] = [
     "Twisted cross-channel Menger lattice in soft ivory light.",
     CROSS_VAULT,
     WARM_IVORY,
+  ),
+  pair(
+    "moss-coral",
+    "Moss Coral",
+    "Smooth-union coral fused from nested spheres, under soft mossy backlight.",
+    CORAL_BLOOM,
+    MOSSY_BACKLIGHT,
   ),
   pair(
     "steel-reef",

@@ -15,7 +15,8 @@ export type FractalFormulaId =
   | "trigbulb"
   | "spherepack"
   | "mengersphere"
-  | "kleinsphere";
+  | "kleinsphere"
+  | "coral";
 
 export interface CameraPreset {
   readonly target: readonly [number, number, number];

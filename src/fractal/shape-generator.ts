@@ -5,6 +5,7 @@ import {
   BLOOM_BULB,
   BUBBLE_FOAM,
   BUBBLE_ORB,
+  CORAL_BLOOM,
   CROSS_VAULT,
   DIAMOND_LATTICE,
   FOAM_ORB,
@@ -60,6 +61,7 @@ export const GENERATOR_BASELINES: Record<FractalFormulaId, FractalShape> = {
   spherepack: BUBBLE_ORB,
   mengersphere: SPONGE_BALL,
   kleinsphere: FOAM_ORB,
+  coral: CORAL_BLOOM,
 };
 
 const clamp = (value: number, min: number, max: number): number =>

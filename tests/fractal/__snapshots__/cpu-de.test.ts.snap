@@ -26,6 +26,14 @@ exports[`CPU distance estimators > match stored golden values (regression guard)
     -25.87979988,
     2.48648829,
   ],
+  "coral": [
+    0.8323227858,
+    0.3646722114,
+    -0.002708517933,
+    0.008956344472,
+    -0.4826794919,
+    2.285869465,
+  ],
   "crossmenger": [
     1,
     0.5,

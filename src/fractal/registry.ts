@@ -1142,6 +1142,91 @@ fn formulaDE(c: vec3<f32>) -> vec2<f32> {
 `,
 };
 
+const CORAL: FormulaDef = {
+  id: "coral",
+  name: "Coral",
+  iterations: { min: 4, max: 18, defaultValue: 12 },
+  params: [
+    {
+      key: "scale",
+      label: "Scale",
+      description: "Per-iteration magnification - higher packs finer, denser coral detail.",
+      slot: 0,
+      min: 1.4,
+      max: 2.6,
+      step: 0.01,
+      defaultValue: 2.0,
+    },
+    {
+      key: "fold",
+      label: "Fold",
+      description: "Fold-corner offset - shifts where each level's spheres cluster and branch.",
+      slot: 1,
+      min: 0.5,
+      max: 1.8,
+      step: 0.01,
+      defaultValue: 1.0,
+    },
+    {
+      key: "rotate",
+      label: "Rotate",
+      description: "Per-iteration twist - breaks the symmetry into spiraling, branching growth.",
+      slot: 2,
+      min: -1.0,
+      max: 1.0,
+      step: 0.005,
+      defaultValue: 0.3,
+    },
+    {
+      key: "smooth",
+      label: "Smooth",
+      description: "Smooth-union blend - 0 is hard spheres, higher fuses them into fleshy coral.",
+      slot: 3,
+      min: 0.0,
+      max: 0.8,
+      step: 0.005,
+      defaultValue: 0.25,
+    },
+  ],
+  de: /* wgsl */ `
+fn coralSmin(a: f32, b: f32, k: f32) -> f32 {
+  if (k <= 1.0e-6) {
+    return min(a, b);
+  }
+  let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+fn coralRot(p: vec3<f32>, a: f32) -> vec3<f32> {
+  let c = cos(a);
+  let s = sin(a);
+  // Compound tilt (around Y then X) so growth is not axis-aligned.
+  let q = vec3<f32>(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+  return vec3<f32>(q.x, c * q.y + s * q.z, -s * q.y + c * q.z);
+}
+fn formulaDE(c: vec3<f32>) -> vec2<f32> {
+  var p = c;
+  var scaleAcc = 1.0;
+  var d = 1.0e10;
+  var trap = 1.0e10;
+  let radius = 0.5;
+  for (var i = 0; i < gIters; i = i + 1) {
+    p = coralRot(p, gP2);
+    p = abs(p);
+    // Deposit a sphere at this level, scaled back to world units, and smooth-union it.
+    // Every fold so far is an isometry x uniform scale, so this distance is exact and
+    // smin only underestimates - safe for the marcher.
+    let sph = (length(p) - radius) / scaleAcc;
+    d = coralSmin(d, sph, gP3 / scaleAcc);
+    trap = min(trap, dot(p, p));
+    // Contract toward the fold corner and magnify for the next level.
+    p = p * gP0 - vec3<f32>(gP1 * (gP0 - 1.0));
+    scaleAcc = scaleAcc * gP0;
+  }
+  return vec2<f32>(d, trap);
+}
+`,
+};
+
 export const FORMULAS: readonly FormulaDef[] = [
   MANDELBOX,
   MANDELBULB,
@@ -1160,6 +1245,7 @@ export const FORMULAS: readonly FormulaDef[] = [
   SPHEREPACK,
   MENGERSPHERE,
   KLEINSPHERE,
+  CORAL,
 ];
 
 export function getFormula(id: FractalFormulaId): FormulaDef {

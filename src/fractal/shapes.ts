@@ -262,6 +262,18 @@ export const FOAM_ORB: FractalShape = {
   trap: { scale: 2.0, power: 0.5 },
 };
 
+export const CORAL_BLOOM: FractalShape = {
+  id: "coral-bloom",
+  name: "Coral Bloom",
+  description: "Smooth-union DIFS: spheres fused level by level into fleshy, branching coral.",
+  formula: "coral",
+  formulaSettings: { iterations: 12, values: { scale: 2.0, fold: 1.0, rotate: 0.3, smooth: 0.25 } },
+  camera: { target: [0, 0, 0], yaw: 2.2, pitch: -0.15, distance: 3.2, fov: 42 },
+  focusDistance: 3.0,
+  render: { maxSteps: 200, maxDistance: 24, surfaceEpsilon: 0.0003, normalEpsilon: 0.0006 },
+  trap: { scale: 0.5, power: 0.5 },
+};
+
 export const SHAPES: readonly FractalShape[] = [
   REEF_SPIRES,
   CARVED_PAGODA,
@@ -283,4 +295,5 @@ export const SHAPES: readonly FractalShape[] = [
   BUBBLE_ORB,
   SPONGE_BALL,
   FOAM_ORB,
+  CORAL_BLOOM,
 ];
