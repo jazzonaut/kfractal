@@ -1,3 +1,5 @@
+import type { TransformId } from "./transforms";
+
 export type FractalFormulaId =
   | "mandelbox"
   | "mandelbulb"
@@ -328,6 +330,37 @@ export interface WarpSettings {
 }
 
 /**
+ * One stage of a hybrid formula chain (hybrid-formula-chains design): a transform from
+ * the transform registry (transforms.ts) plus this stage's parameter values, keyed by the
+ * transform's param schema. Stages apply in order, every iteration.
+ */
+export interface ChainStage {
+  readonly transform: TransformId;
+  readonly values: Readonly<Record<string, number>>;
+}
+
+/** Final distance-estimation form: `linear` = (length(p))/dr; `log` = 0.25*log(r)*r/dr. */
+export type ChainDeForm = "linear" | "log";
+
+/**
+ * A hybrid formula chain: an ordered list of transforms applied per iteration, the common
+ * denominator MB3D/Mandelbulber hybrids use. When present on a shape it supersedes
+ * `formula`/`formulaSettings`; absent, the atomic formula path runs unchanged (mirrors the
+ * optional-field precedent of `warp?`/`dive?`). Both the GPU codegen and the CPU
+ * interpreter (chain.ts) consume this same object, so they cannot structurally drift.
+ */
+export interface FormulaChain {
+  readonly stages: readonly ChainStage[];
+  /** Raised iteration cap vs atomic formulas (see design §3.5). Rebuilt fresh, never mutated. */
+  readonly iterations: number;
+  /** Re-inject the original c each iteration after the stages (escape-time vs pure IFS). */
+  readonly addC: boolean;
+  /** Escape radius; non-finite (Infinity) means no bailout, for pure fold/IFS chains. */
+  readonly bailout: number;
+  readonly deForm: ChainDeForm;
+}
+
+/**
  * Deep-zoom frame: the dive transform F(p) = offset + scale*(R*p) active when a shape
  * was snapshotted. Without it a camera saved mid-dive reapplies in unrebased world
  * space and lands buried or lost. Omitted when the view was at top level (identity).
@@ -350,6 +383,12 @@ export interface FractalShape {
   readonly description: string;
   readonly formula: FractalFormulaId;
   readonly formulaSettings: FormulaSettings;
+  /**
+   * Hybrid formula chain (hybrid-formula-chains design). When present it supersedes
+   * `formula`/`formulaSettings` for rendering and diving; `formula` is kept as a
+   * best-effort fallback for older builds. Absent = the atomic formula path runs unchanged.
+   */
+  readonly chain?: FormulaChain;
   readonly camera: CameraPreset;
   /** Default focus distance for this framing; travels with the shape, not the look. */
   readonly focusDistance: number;

@@ -14,6 +14,7 @@ import GrowthSection from "./sections/GrowthSection.vue";
 import LightingSection from "./sections/LightingSection.vue";
 import GradeSection from "./sections/GradeSection.vue";
 import FormulaSection from "./sections/FormulaSection.vue";
+import ChainSection from "./sections/ChainSection.vue";
 import WarpSection from "./sections/WarpSection.vue";
 import MaterialSection from "./sections/MaterialSection.vue";
 import PaletteSection from "./sections/PaletteSection.vue";
@@ -39,7 +40,11 @@ const sections = computed(() => [
   { id: "grade", title: "Grade", component: GradeSection },
   { id: "effects", title: "Effects", component: EffectsSection },
   { id: "material", title: "Material", component: MaterialSection },
-  { id: "formula", title: state.formulaName, component: FormulaSection },
+  {
+    id: "formula",
+    title: state.chainActive ? "Hybrid chain" : state.formulaName,
+    component: state.chainActive ? ChainSection : FormulaSection,
+  },
   { id: "warp", title: "Warp", component: WarpSection },
   { id: "growth", title: "Growth", component: GrowthSection },
 ]);

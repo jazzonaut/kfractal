@@ -10,10 +10,13 @@ import {
 import { LOOKS, defaultNewLight } from "../fractal/looks";
 import { PRESETS } from "../fractal/presets";
 import { getFormula } from "../fractal/registry";
-import { mutateFormulaSettings, rollShape } from "../fractal/shape-generator";
+import { mutateFormulaSettings, rollChain, rollShape } from "../fractal/shape-generator";
 import { SHAPES } from "../fractal/shapes";
-import { nextPaletteStopId } from "../fractal/state-bridge";
+import { chainStageStateFor, nextPaletteStopId } from "../fractal/state-bridge";
 import type { StateBridge } from "../fractal/state-bridge";
+import { CHAIN_MAX_ITERATIONS, CHAIN_MAX_STAGES } from "../fractal/chain";
+import type { TransformId } from "../fractal/transforms";
+import type { ChainDeForm } from "../fractal/types";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS, sortStopsByPosition } from "../fractal/types";
 import type {
   AuthoringStamps,
@@ -208,11 +211,75 @@ export function createController(deps: {
       resetAccumulation();
     },
     setIterations: (value: number) => {
-      const { iterations } = getFormula(engine.shape.formula);
-      const clamped = Math.round(Math.min(iterations.max, Math.max(iterations.min, value)));
+      // A chain carries its own (raised) cap; the atomic formula uses its registry range.
+      const [lo, hi] = state.chainActive
+        ? [1, CHAIN_MAX_ITERATIONS]
+        : [
+            getFormula(engine.shape.formula).iterations.min,
+            getFormula(engine.shape.formula).iterations.max,
+          ];
+      const clamped = Math.round(Math.min(hi, Math.max(lo, value)));
       state.iterations = clamped;
+      // gIters is a uniform either way (the engine re-pushes state.iterations + dive boost each
+      // frame), so an iteration change never recompiles - chain or atomic.
       fractal.uniforms.iterations.value = clamped;
       resetAccumulation();
+    },
+    startChain: () => {
+      bridge.enterChain(rollChain());
+      state.selectedShapeId = "";
+      state.selectedPresetId = "";
+    },
+    removeChain: () => bridge.exitChain(),
+    addChainStage: (transform: TransformId) => {
+      if (state.chainStages.length >= CHAIN_MAX_STAGES) return;
+      state.chainStages.push(chainStageStateFor(transform));
+      bridge.syncChain();
+    },
+    removeChainStage: (index: number) => {
+      if (state.chainStages.length <= 1 || index < 0 || index >= state.chainStages.length) return;
+      state.chainStages.splice(index, 1);
+      bridge.syncChain();
+    },
+    moveChainStage: (index: number, dir: -1 | 1) => {
+      const to = index + dir;
+      if (
+        index < 0 ||
+        index >= state.chainStages.length ||
+        to < 0 ||
+        to >= state.chainStages.length
+      ) {
+        return;
+      }
+      const [moved] = state.chainStages.splice(index, 1);
+      state.chainStages.splice(to, 0, moved!);
+      bridge.syncChain();
+    },
+    setChainStageTransform: (index: number, transform: TransformId) => {
+      const current = state.chainStages[index];
+      if (!current || current.transform === transform) return;
+      state.chainStages[index] = chainStageStateFor(transform);
+      bridge.syncChain();
+    },
+    setChainStageParam: (index: number, key: string, value: number) => {
+      const param = state.chainStages[index]?.params.find((p) => p.key === key);
+      if (!param) return;
+      param.value = Math.min(param.max, Math.max(param.min, value));
+      // Value edit: the compiled DE is unchanged, so take the uniform-only path (no recompile,
+      // no per-frame DE-string regen) - the structural edits below use syncChain.
+      bridge.syncChainValues();
+    },
+    setChainAddC: (value: boolean) => {
+      state.chainAddC = value;
+      bridge.syncChain();
+    },
+    setChainBailout: (value: number) => {
+      state.chainBailout = Math.max(0, value);
+      bridge.syncChain();
+    },
+    setChainDeForm: (value: ChainDeForm) => {
+      state.chainDeForm = value;
+      bridge.syncChain();
     },
     setMaterialParam: (key, value) => {
       state[key] = value;

@@ -125,6 +125,14 @@ fn ${RENDER_SAMPLE_FN}(
   frame: f32,
   formulaP: vec4<f32>,
   iterations: f32,
+  stageP0: vec4<f32>,
+  stageP1: vec4<f32>,
+  stageP2: vec4<f32>,
+  stageP3: vec4<f32>,
+  stageP4: vec4<f32>,
+  stageP5: vec4<f32>,
+  stageP6: vec4<f32>,
+  stageP7: vec4<f32>,
   renderP: vec4<f32>,
   lightPosDir0: vec4<f32>,
   lightPosDir1: vec4<f32>,
@@ -195,6 +203,9 @@ fn ${RENDER_SAMPLE_FN}(
   gP1 = formulaP.y;
   gP2 = formulaP.z;
   gP3 = formulaP.w;
+  gStageP = array<vec4<f32>, 8>(
+    stageP0, stageP1, stageP2, stageP3, stageP4, stageP5, stageP6, stageP7,
+  );
   gIters = i32(iterations);
   gMaxSteps = i32(renderP.x);
   gMaxDist = renderP.y;
@@ -330,6 +341,10 @@ var<private> gP0: f32;
 var<private> gP1: f32;
 var<private> gP2: f32;
 var<private> gP3: f32;
+// Hybrid-chain stage params (hybrid-formula-chains design): one vec4 per chain stage, the
+// stage's transform params in schema order (x..w). Atomic formulas use gP0..gP3 and ignore
+// this; chain-compiled formulaDE bodies read gStageP[stage].{x,y,z,w}. See chain.ts.
+var<private> gStageP: array<vec4<f32>, 8>;
 var<private> gIters: i32;
 var<private> gMaxSteps: i32;
 var<private> gMaxDist: f32;

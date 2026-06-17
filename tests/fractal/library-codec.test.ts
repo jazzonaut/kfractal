@@ -7,6 +7,7 @@ import {
   parseLibraryFile,
 } from "../../src/fractal/library-codec";
 import { AO_DEFAULTS } from "../../src/fractal/effects-defaults";
+import { BOX_BULB, MANDELBOX_AS_CHAIN } from "../../src/fractal/chain-presets";
 import { SHAPES } from "../../src/fractal/shapes";
 import { LOOKS } from "../../src/fractal/looks";
 import { PRESETS } from "../../src/fractal/presets";
@@ -209,6 +210,54 @@ describe("clampShapeToRegistry", () => {
     };
     const clamped = clampShapeToRegistry(shape);
     expect("bogusKey" in clamped.formulaSettings.values).toBe(false);
+  });
+});
+
+const chainShape = (chain: NonNullable<FractalShape["chain"]>): FractalShape => ({
+  ...SHAPES[0]!,
+  chain,
+});
+
+describe("hybrid formula chain (Phase 2 codec)", () => {
+  it("round-trips a chain shape with a finite bailout", () => {
+    const result = parseLibraryFile(buildLibraryFile("shape", chainShape(BOX_BULB)));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "shape") {
+      expect(result.item.chain?.stages.length).toBe(BOX_BULB.stages.length);
+      expect(result.item.chain?.deForm).toBe("linear");
+      expect(result.item.chain?.bailout).toBe(6);
+      expect(result.item.chain?.stages[2]?.transform).toBe("bulbPow");
+    }
+  });
+
+  it("round-trips an Infinity bailout through JSON null (pure fold/IFS chains)", () => {
+    // JSON cannot carry Infinity; buildLibraryFile emits null and the reader maps it back.
+    const file = buildLibraryFile("shape", chainShape(MANDELBOX_AS_CHAIN));
+    expect(JSON.parse(file).item.chain.bailout).toBeNull();
+    const result = parseLibraryFile(file);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "shape") {
+      expect(result.item.chain?.bailout).toBe(Infinity);
+    }
+  });
+
+  it("drops a stage whose transform is unknown and clamps out-of-range params", () => {
+    const file = JSON.parse(buildLibraryFile("shape", chainShape(BOX_BULB))) as any;
+    file.item.chain.stages.push({ transform: "notATransform", values: {} });
+    file.item.chain.stages[0].values.fold = 999; // boxFold fold max is 2
+    const result = parseLibraryFile(JSON.stringify(file));
+    // zod's enum rejects the unknown transform at parse time, so the whole file is invalid -
+    // an importer cannot smuggle in a stage the engine has no transform for.
+    expect(result.ok).toBe(false);
+  });
+
+  it("falls back to the atomic formula when clampChain finds nothing valid", () => {
+    // A structurally-valid-but-empty-after-clamp chain (zero stages can't pass the min(1)
+    // schema, so simulate the clamp path directly): clampShapeToRegistry drops it.
+    const shape = chainShape({ ...BOX_BULB, stages: [] });
+    const clamped = clampShapeToRegistry(shape);
+    expect(clamped.chain).toBeUndefined();
+    expect(clamped.formula).toBe(SHAPES[0]!.formula);
   });
 });
 

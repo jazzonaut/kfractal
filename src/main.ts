@@ -1,5 +1,13 @@
 import * as THREE from "three/webgpu";
 import { PRESETS } from "./fractal/presets";
+import {
+  BOX_BULB,
+  KLEIN_FOAM,
+  MANDELBOX_AS_CHAIN,
+  MANDELBULB_AS_CHAIN,
+  MENGER_SPIRE,
+  SIN_BULB,
+} from "./fractal/chain-presets";
 import { getCpuDe } from "./fractal/cpu-de";
 import { warpCpuDe } from "./fractal/warp";
 import { createStateBridge, createWorkstationState } from "./fractal/state-bridge";
@@ -226,6 +234,23 @@ async function main(): Promise<void> {
       },
       samples: () => engine.sampleIndex,
       dive: () => ({ offset: dive.offset.toArray(), scale: dive.scale, debug: { ...dive.debug } }),
+      // Hybrid formula chains (hybrid-formula-chains design): attach a chain to the current
+      // shape for end-to-end render/dive/tunnelling verification on a real GPU (the chain
+      // editor is the user-facing path; this is the scripted harness seam).
+      chainPresets: {
+        BOX_BULB,
+        MANDELBOX_AS_CHAIN,
+        MANDELBULB_AS_CHAIN,
+        MENGER_SPIRE,
+        KLEIN_FOAM,
+        SIN_BULB,
+      },
+      // Intentionally unvalidated (no clampChain) and loosely typed: a DEV-only hook fed by the
+      // curated presets above / hand-authored test chains, not user input. The UI/codec paths
+      // both clamp; this trusts its caller.
+      applyChain: (chain: unknown): void => {
+        bridge.applyShape({ ...engine.shape, chain: chain as never });
+      },
       // Camera-space distance to the surface per the f64 CPU DE; diagnoses buried (≈0)
       // vs empty-space (≫ extent) cameras during dive verification. Growth-adjusted so
       // it stays truthful against the displaced GPU surface.

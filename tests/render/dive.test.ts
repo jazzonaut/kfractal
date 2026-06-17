@@ -19,6 +19,12 @@ describe("DiveController defaults", () => {
     expect(d.offset.lengthSq()).toBe(0);
     expect(d.basis.equals(new THREE.Matrix3())).toBe(true);
   });
+
+  it("defaults to the atomic-formula path (no warp, no chain)", () => {
+    const d = new DiveController();
+    expect(d.warp).toBeNull();
+    expect(d.chain).toBeNull(); // set from shape.chain; null marches getCpuDe, not chainDe
+  });
 });
 
 describe("DiveController.extraIterations", () => {

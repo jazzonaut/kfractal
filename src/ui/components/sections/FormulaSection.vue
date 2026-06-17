@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Button from "primevue/button";
 import ParamSlider from "../ParamSlider.vue";
 import { useController } from "../../composables/use-controller";
 
@@ -29,5 +30,17 @@ const state = controller.state;
     description="Number of fractal iterations. Higher reveals finer detail but costs performance."
     testid="param-iterations"
     @update:model-value="controller.setIterations($event)"
+  />
+  <!-- Hybrid formula chains (hybrid-formula-chains design): turn this atomic formula into an
+       editable stack of composable transforms. The chain editor then replaces this section. -->
+  <Button
+    class="mt-2 w-full"
+    label="Start hybrid chain"
+    icon="pi pi-sitemap"
+    size="small"
+    severity="secondary"
+    outlined
+    data-testid="start-chain"
+    @click="controller.startChain()"
   />
 </template>

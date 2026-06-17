@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { FPS_INTERVAL } from "../config/constants";
 import { startLoop } from "../core/loop";
 import { warpStepBoost } from "../fractal/warp";
+import { CHAIN_PREVIEW_ITERS, chainStepScale } from "../fractal/chain";
 import type { FractalShape } from "../fractal/types";
 import type { ExportOptions, ExportResult, WorkstationState } from "../ui/controller";
 import { AccumulationBuffer } from "./accumulation";
@@ -518,23 +519,30 @@ export class RenderEngine {
     // the world scale when the camera leaves the orbit band, and re-anchor through the
     // Apollonian's own self-similarity map. Every change is view-preserving, but the
     // uniforms moved, so drop the accumulation.
+    // Chains carry a much higher iteration cap; the live preview marches a capped count for
+    // interactivity, while an explicit render/export (state.rendering) uses the full count.
+    // Computed before dive.update so the dive's f64 CPU mirror pins against the SAME surface the
+    // GPU draws - otherwise the preview-capped GPU surface is fatter than the full-count surface
+    // the pin steers against, and the camera can penetrate the drawn geometry before it engages.
+    const baseIters =
+      this.dive.chain && !this.state.rendering
+        ? Math.min(this.state.iterations, CHAIN_PREVIEW_ITERS)
+        : this.state.iterations;
     if (
-      this.dive.update(
-        this.stage,
-        shape.formula,
-        this.fractal.uniforms.formulaP.value,
-        this.state.iterations,
-      )
+      this.dive.update(this.stage, shape.formula, this.fractal.uniforms.formulaP.value, baseIters)
     ) {
       this.resetAccumulation();
     }
     this.fractal.syncDive(this.dive.offset, this.dive.basis, this.dive.scale);
     this.fractal.uniforms.iterations.value =
-      this.state.iterations + this.dive.extraIterations(this.stage.distance);
-    // Warp Lipschitz division shrinks every step; grow the budget to match (capped).
+      baseIters + this.dive.extraIterations(this.stage.distance);
+    // Warp Lipschitz division shrinks every step; grow the budget to match (capped). A chain
+    // can raise the field's Lipschitz constant too, so its step-scale boosts the budget the
+    // same way (design §3.4): more steps cover the same span the tighter march now needs.
     const warpBoost = this.dive.warp ? warpStepBoost(this.dive.warp) : 1;
+    const chainBoost = this.dive.chain ? chainStepScale(this.dive.chain) : 1;
     this.fractal.uniforms.renderP.value.x = Math.round(
-      this.dive.marchSteps(shape.render.maxSteps, this.stage.distance) * warpBoost,
+      this.dive.marchSteps(shape.render.maxSteps, this.stage.distance) * warpBoost * chainBoost,
     );
     // Floor the draw distance at the camera's own distance (plus the fractal's extent):
     // shapes tune maxDistance for close-up framing, and a far pull-back would otherwise

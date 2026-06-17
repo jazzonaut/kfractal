@@ -14,9 +14,12 @@ import { FOG_DEFAULTS } from "../fractal/effects-defaults";
 import { FORMULAS, getFormula } from "../fractal/registry";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS, glassParams, sortStopsByPosition } from "../fractal/types";
 import { defaultWarp, packWarpAxes, warpConstLipschitz } from "../fractal/warp";
+import { CHAIN_MAX_STAGES, compileChainDE } from "../fractal/chain";
+import { getTransform } from "../fractal/transforms";
 import type { EnvironmentData } from "./environment";
 import type {
   EffectsSettings,
+  FormulaChain,
   FractalFormulaId,
   FractalShape,
   LightSource,
@@ -39,6 +42,10 @@ const SKY_MODE_INDEX = { studio: 0, preetham: 1, envmap: 2 } as const;
 const GROWTH_MODE_INDEX = { spikes: 0, bumps: 1, crystals: 2, fins: 3 } as const;
 
 /* TSL/WGSL node inputs are dynamically typed; `any` is scoped to this GPU seam. */
+
+/** Per-mode LRU cap on retained hybrid-chain pipelines (the DE-string-keyed caches grow with
+ * every structural edit, unlike the formula-id-keyed atomic caches). */
+const CHAIN_MATERIAL_CACHE = 12;
 
 export const MODE_PREVIEW = 0;
 export const MODE_PATHTRACE = 1;
@@ -68,6 +75,15 @@ export interface SampleUniforms {
   /** Generic formula slots gP0..gP3, mapped through the registry schema. */
   readonly formulaP: any;
   readonly iterations: any;
+  /** Hybrid-chain stage params: one vec4 per stage (gStageP). Unused by atomic formulas. */
+  readonly stageP0: any;
+  readonly stageP1: any;
+  readonly stageP2: any;
+  readonly stageP3: any;
+  readonly stageP4: any;
+  readonly stageP5: any;
+  readonly stageP6: any;
+  readonly stageP7: any;
   /** maxSteps, maxDistance, surfaceEpsilon, normalEpsilon. */
   readonly renderP: any;
   /** Per light i: xyz = direction toward light (directional) or position (positional); w = type. */
@@ -169,7 +185,15 @@ export class FractalPass {
   // so boot and live preview only ever touch the cheap one.
   private readonly previewMaterials = new Map<FractalFormulaId, THREE.MeshBasicNodeMaterial>();
   private readonly renderMaterials = new Map<FractalFormulaId, THREE.MeshBasicNodeMaterial>();
+  // Hybrid-chain materials, keyed by the compiled formulaDE string - which IS the chain's
+  // structural identity (param values are uniforms, so only structural edits change it).
+  // A chain is fixed per shape, so it cold-compiles once per distinct structure and caches,
+  // the same lazy model the atomic formulas use on first switch.
+  private readonly chainPreviewMaterials = new Map<string, THREE.MeshBasicNodeMaterial>();
+  private readonly chainRenderMaterials = new Map<string, THREE.MeshBasicNodeMaterial>();
   private activeFormula: FractalFormulaId;
+  /** Compiled DE of the active chain, or null when an atomic formula is active. */
+  private activeChainDE: string | null = null;
   // Serializes every compileAsync (warm + on-demand). three's compileAsync saves/restores shared
   // renderer state and is NOT re-entrant, so two overlapping calls - e.g. a Render click landing
   // mid-warm - would corrupt each other's state. All compiles chain through here so the entry
@@ -206,6 +230,14 @@ export class FractalPass {
       frame: uniform(0),
       formulaP: uniform(new THREE.Vector4(2.8, 1.0, 0.5, 0)),
       iterations: uniform(14),
+      stageP0: uniform(new THREE.Vector4()),
+      stageP1: uniform(new THREE.Vector4()),
+      stageP2: uniform(new THREE.Vector4()),
+      stageP3: uniform(new THREE.Vector4()),
+      stageP4: uniform(new THREE.Vector4()),
+      stageP5: uniform(new THREE.Vector4()),
+      stageP6: uniform(new THREE.Vector4()),
+      stageP7: uniform(new THREE.Vector4()),
       renderP: uniform(new THREE.Vector4(128, 30, 0.0004, 0.0008)),
       // Light 0 reproduces the pre-multi-light studio key; the other slots sit dark.
       lightPosDir0: uniform(new THREE.Vector4(0.48, 0.72, 0.42, 0).normalize()),
@@ -286,8 +318,16 @@ export class FractalPass {
 
   /** Build a formula's material; `previewOnly` selects the cheap preview-only shader. */
   private buildMaterial(id: FractalFormulaId, previewOnly: boolean): THREE.MeshBasicNodeMaterial {
+    return this.buildMaterialFromDE(getFormula(id).de, previewOnly);
+  }
+
+  /**
+   * Build a material from a WGSL formulaDE string - the atomic registry DE or a chain-compiled
+   * DE (compileChainDE). Everything downstream of formulaDE is identical, so both share this.
+   */
+  private buildMaterialFromDE(de: string, previewOnly: boolean): THREE.MeshBasicNodeMaterial {
     const u = this.uniforms;
-    const renderSample: any = wgslFn(buildRenderSampleWGSL(getFormula(id).de, previewOnly));
+    const renderSample: any = wgslFn(buildRenderSampleWGSL(de, previewOnly));
     const material = new THREE.MeshBasicNodeMaterial();
     material.colorNode = renderSample({
       uv: uv(),
@@ -301,6 +341,14 @@ export class FractalPass {
       frame: u.frame,
       formulaP: u.formulaP,
       iterations: u.iterations,
+      stageP0: u.stageP0,
+      stageP1: u.stageP1,
+      stageP2: u.stageP2,
+      stageP3: u.stageP3,
+      stageP4: u.stageP4,
+      stageP5: u.stageP5,
+      stageP6: u.stageP6,
+      stageP7: u.stageP7,
       renderP: u.renderP,
       lightPosDir0: u.lightPosDir0,
       lightPosDir1: u.lightPosDir1,
@@ -380,32 +428,66 @@ export class FractalPass {
     return material;
   }
 
-  /** Put the pipeline the active formula + current mode need onto the mesh: the preview-only
-   * material for mode 0, the full material for the path-trace/feature passes. */
+  /** Chain pipelines, lazily built and cached by compiled-DE structural key (see the maps). */
+  private chainMaterialFor(de: string, previewOnly: boolean): THREE.MeshBasicNodeMaterial {
+    const cache = previewOnly ? this.chainPreviewMaterials : this.chainRenderMaterials;
+    const cached = cache.get(de);
+    if (cached) {
+      // Refresh recency (Map preserves insertion order) so the active chain is never the LRU
+      // victim below.
+      cache.delete(de);
+      cache.set(de, cached);
+      return cached;
+    }
+    const material = this.buildMaterialFromDE(de, previewOnly);
+    cache.set(de, material);
+    // Unlike the atomic caches (bounded by the ~18 formula ids), the chain caches are keyed by
+    // the compiled-DE string, so every structural edit in the chain editor mints a new compiled
+    // pipeline. Evict the least-recently-used to bound retained GPU pipelines over a long
+    // editing session; never evict the active chain (it's the most recent, so it can't be LRU).
+    while (cache.size > CHAIN_MATERIAL_CACHE) {
+      const lru = cache.keys().next().value;
+      if (lru === undefined || lru === this.activeChainDE) break;
+      cache.get(lru)?.dispose();
+      cache.delete(lru);
+    }
+    return material;
+  }
+
+  /** Put the pipeline the active source + current mode need onto the mesh: the preview-only
+   * material for mode 0, the full material for the path-trace/feature passes. A chain uses its
+   * compiled-DE pipeline; otherwise the active atomic formula's. */
   private syncMeshMaterial(): void {
+    const preview = this.uniforms.mode.value === MODE_PREVIEW;
+    if (this.activeChainDE !== null) {
+      this.mesh.material = this.chainMaterialFor(this.activeChainDE, preview);
+      return;
+    }
     const id = this.activeFormula;
-    this.mesh.material =
-      this.uniforms.mode.value === MODE_PREVIEW
-        ? this.previewMaterialFor(id)
-        : this.renderMaterialFor(id);
+    this.mesh.material = preview ? this.previewMaterialFor(id) : this.renderMaterialFor(id);
   }
 
   setFormula(id: FractalFormulaId): void {
     this.activeFormula = id;
+    this.activeChainDE = null;
     this.syncMeshMaterial();
   }
 
-  /** Map a shape's geometry side onto the uniforms and swap to its formula's pipeline. */
+  /** Map a shape's geometry side onto the uniforms and swap to its formula/chain pipeline. */
   applyShape(shape: FractalShape): void {
     const u = this.uniforms;
-    const def = getFormula(shape.formula);
 
-    const slots: [number, number, number, number] = [0, 0, 0, 0];
-    for (const param of def.params) {
-      slots[param.slot] = shape.formulaSettings.values[param.key] ?? param.defaultValue;
+    if (shape.chain) {
+      this.applyChain(shape.chain);
+    } else {
+      const def = getFormula(shape.formula);
+      const slots: [number, number, number, number] = [0, 0, 0, 0];
+      for (const param of def.params) {
+        slots[param.slot] = shape.formulaSettings.values[param.key] ?? param.defaultValue;
+      }
+      u.formulaP.value.set(slots[0], slots[1], slots[2], slots[3]);
+      u.iterations.value = shape.formulaSettings.iterations;
     }
-    u.formulaP.value.set(slots[0], slots[1], slots[2], slots[3]);
-    u.iterations.value = shape.formulaSettings.iterations;
 
     const r = shape.render;
     u.renderP.value.set(r.maxSteps, r.maxDistance, r.surfaceEpsilon, r.normalEpsilon);
@@ -415,7 +497,52 @@ export class FractalPass {
     u.trapMap.value.set(shape.trap.scale, shape.trap.power);
     this.applyWarp(shape.warp);
 
-    this.setFormula(shape.formula);
+    // A chain sets its own pipeline in applyChain; the atomic path swaps formula here.
+    if (!shape.chain) this.setFormula(shape.formula);
+  }
+
+  /**
+   * Push a chain's stage param VALUES to the gStageP uniforms (+ iterations). Uniforms only - no
+   * compile, no material swap - so this is the value-edit hot path (slider drags): the compiled
+   * DE is unchanged, so the active pipeline stays correct. Structural edits go through applyChain.
+   */
+  applyChainValues(chain: FormulaChain): void {
+    const u = this.uniforms;
+    const stage: any[] = [
+      u.stageP0,
+      u.stageP1,
+      u.stageP2,
+      u.stageP3,
+      u.stageP4,
+      u.stageP5,
+      u.stageP6,
+      u.stageP7,
+    ];
+    for (let i = 0; i < CHAIN_MAX_STAGES; i += 1) {
+      const s = chain.stages[i];
+      const slots = [0, 0, 0, 0];
+      if (s) {
+        const params = getTransform(s.transform).params;
+        for (let k = 0; k < params.length; k += 1) {
+          const def = params[k]!;
+          slots[k] = s.values[def.key] ?? def.defaultValue;
+        }
+      }
+      stage[i]!.value.set(slots[0], slots[1], slots[2], slots[3]);
+    }
+    u.iterations.value = chain.iterations;
+  }
+
+  /**
+   * Map a hybrid chain onto the uniforms and swap to its compiled pipeline. Stage param values go
+   * to gStageP (uniforms); the chain's STRUCTURE (compiled DE) selects the cached pipeline and
+   * only changes - and thus recompiles - on a structural edit. compileChainDE is the structural
+   * cost, so value edits should use applyChainValues to skip the per-frame string regen.
+   */
+  applyChain(chain: FormulaChain): void {
+    this.applyChainValues(chain);
+    this.activeChainDE = compileChainDE(chain);
+    this.syncMeshMaterial();
   }
 
   /**
@@ -829,17 +956,23 @@ export class FractalPass {
   }
 
   /**
-   * Compile the active formula's full path-trace/feature pipeline off the synchronous render
+   * Compile the ACTIVE source's full path-trace/feature pipeline off the synchronous render
    * path. startRender awaits this before flipping into the render loop, whose sample-0 feature
    * pass would otherwise compile it inside renderTo and freeze the UI for the cold compile.
-   * A near-instant cache hit when the background warm already covered the active formula.
+   * A near-instant cache hit when the background warm already covered the active formula; for a
+   * chain (which can't be precompiled, so syncMeshMaterial would otherwise cold-compile the
+   * chain render material on sample 0) this is the first and only place it gets warmed.
    */
   async ensureRenderPipeline(
     renderer: THREE.WebGPURenderer,
     target: THREE.RenderTarget,
   ): Promise<void> {
     try {
-      await this.compilePipeline(renderer, target, this.renderMaterialFor(this.activeFormula));
+      const material =
+        this.activeChainDE !== null
+          ? this.chainMaterialFor(this.activeChainDE, false)
+          : this.renderMaterialFor(this.activeFormula);
+      await this.compilePipeline(renderer, target, material);
     } finally {
       renderer.setRenderTarget(null);
     }
@@ -848,8 +981,12 @@ export class FractalPass {
   dispose(): void {
     for (const material of this.previewMaterials.values()) material.dispose();
     for (const material of this.renderMaterials.values()) material.dispose();
+    for (const material of this.chainPreviewMaterials.values()) material.dispose();
+    for (const material of this.chainRenderMaterials.values()) material.dispose();
     this.previewMaterials.clear();
     this.renderMaterials.clear();
+    this.chainPreviewMaterials.clear();
+    this.chainRenderMaterials.clear();
     this.mesh.geometry.dispose();
     this.envRadianceTexture.dispose();
     this.scene.clear();

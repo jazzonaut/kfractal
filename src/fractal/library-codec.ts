@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { AO_DEFAULTS } from "./effects-defaults";
+import { clampChain } from "./chain";
 import { DEFAULT_SKY, ENVIRONMENTS } from "./environments";
 import { FORMULAS, getFormula } from "./registry";
+import { TRANSFORM_LIST } from "./transforms";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS } from "./types";
 import { clampWarp, isWarpOff } from "./warp";
+import type { TransformId } from "./transforms";
 import type { FractalFormulaId, FractalPreset, FractalShape, LibraryKind, Look } from "./types";
 
 /**
@@ -21,6 +24,22 @@ const formulaIds = FORMULAS.map((formula) => formula.id) as [
   FractalFormulaId,
   ...FractalFormulaId[],
 ];
+
+const transformIds = TRANSFORM_LIST.map((t) => t.id) as [TransformId, ...TransformId[]];
+
+// Hybrid formula chain (hybrid-formula-chains design), added after v7. Optional so older
+// files keep parsing (absent = the atomic formula path). bailout accepts null for the
+// no-bailout (pure fold/IFS) case, which JSON uses since it cannot carry Infinity; the
+// reader maps null -> Infinity. clampChain re-validates stages/params against the registry.
+const chainSchema = z.object({
+  stages: z
+    .array(z.object({ transform: z.enum(transformIds), values: z.record(z.string(), finite) }))
+    .min(1),
+  iterations: finite,
+  addC: z.boolean(),
+  bailout: finite.nullable(),
+  deForm: z.enum(["linear", "log"]),
+});
 
 export const shapeSchema = z.object({
   id: z.string().min(1),
@@ -71,6 +90,9 @@ export const shapeSchema = z.object({
       scale: finite,
     })
     .optional(),
+  // Hybrid formula chain; when present it supersedes formula/formulaSettings (formula is kept
+  // as the best-effort fallback for builds without chain support, which strip this key).
+  chain: chainSchema.optional(),
 });
 
 export const lightSourceSchema = z.object({
@@ -206,7 +228,7 @@ export const userPresetSchema = presetSchema.extend(stamps);
  * too (no migration path - the app is the sole producer of these files). Rule: any
  * schema-shape change bumps this.
  */
-export const LIBRARY_FILE_VERSION = 7;
+export const LIBRARY_FILE_VERSION = 8;
 
 export type ParseLibraryResult =
   | { readonly ok: true; readonly kind: "shape"; readonly item: FractalShape }
@@ -248,8 +270,14 @@ export function clampShapeToRegistry(shape: FractalShape): FractalShape {
     surfaceEpsilon: clamp(r.surfaceEpsilon, 1e-6, 0.1),
     normalEpsilon: clamp(r.normalEpsilon, 1e-6, 0.1),
   };
-  const { warp: rawWarp, ...rest } = shape;
-  const clamped: FractalShape = { ...rest, render, formulaSettings: { iterations, values } };
+  const { warp: rawWarp, chain: rawChain, ...rest } = shape;
+  let clamped: FractalShape = { ...rest, render, formulaSettings: { iterations, values } };
+  // A chain supersedes the atomic formula; clampChain drops invalid stages and returns null
+  // when nothing valid remains, in which case the shape falls back to its `formula`.
+  if (rawChain) {
+    const chain = clampChain(rawChain);
+    if (chain) clamped = { ...clamped, chain };
+  }
   if (rawWarp) {
     const warp = clampWarp(rawWarp);
     if (!isWarpOff(warp)) return { ...clamped, warp };

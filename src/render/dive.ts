@@ -1,9 +1,10 @@
 import * as THREE from "three/webgpu";
 import { getCpuDe, latticeFoldComponent } from "../fractal/cpu-de";
+import { chainDe, chainStepScale } from "../fractal/chain";
 import { warpCpuDe } from "../fractal/warp";
 import type { CpuDeParams } from "../fractal/cpu-de";
 import type { Stage } from "./stage";
-import type { DiveFrame, FractalFormulaId, WarpSettings } from "../fractal/types";
+import type { DiveFrame, FormulaChain, FractalFormulaId, WarpSettings } from "../fractal/types";
 
 /**
  * Infinite/deep zoom (the dive transform).
@@ -122,6 +123,13 @@ export class DiveController {
    * from the shape by main.ts.
    */
   warp: WarpSettings | null = null;
+  /**
+   * Active hybrid formula chain (hybrid-formula-chains design), or null for the atomic
+   * formula path. When set, the surface-pin march estimates distance through the chain
+   * interpreter (chainDe) instead of getCpuDe - the same chain object the GPU compiles - so
+   * the dive steers against the geometry the GPU actually draws. Synced from the shape.
+   */
+  chain: FormulaChain | null = null;
   /** Dive verification counters (read via the __kf dev hook; not part of the seam). */
   readonly debug = {
     unfoldGains: 0,
@@ -174,8 +182,9 @@ export class DiveController {
    */
   private scaleFloor(formula: FractalFormulaId): number {
     // Lattice-folded: |offset| stays O(1) and re-anchoring keeps scale O(1); no floor.
-    // Under a warp re-anchoring is disabled (see update), so the generic floor applies.
-    if (formula === "apollonian" && !this.warp) return 0;
+    // Under a warp OR a chain re-anchoring is disabled (see update) - neither set is invariant
+    // under the Apollonian T - so the generic floor applies instead.
+    if (formula === "apollonian" && !this.warp && !this.chain) return 0;
     const mag = Math.max(
       1,
       Math.abs(this.offset.x),
@@ -267,10 +276,16 @@ export class DiveController {
       changed = true;
     }
 
-    // Re-anchoring relies on the set's invariance under T, which a domain warp breaks
-    // (the warped set is NOT invariant); warped apollonian dives just bottom out at the
-    // generic f32 floor instead.
-    if (formula === "apollonian" && !this.warp && this.scale * stage.distance < E_SNAP) {
+    // Re-anchoring relies on the set's invariance under the Apollonian T, which a domain warp
+    // OR a hybrid chain breaks (neither the warped nor the chained set is invariant); those
+    // dives just bottom out at the generic f32 floor instead. A chain is reachable here because
+    // "Start hybrid chain" leaves engine.shape.formula intact, so it can still be apollonian.
+    if (
+      formula === "apollonian" &&
+      !this.warp &&
+      !this.chain &&
+      this.scale * stage.distance < E_SNAP
+    ) {
       this.recenter(stage, formula);
       changed = this.unfoldApollonian(stage.distance, formulaP.x) || changed;
     }
@@ -310,15 +325,27 @@ export class DiveController {
     formula: FractalFormulaId,
     params: CpuDeParams,
   ): number | null {
-    const de = getCpuDe(formula);
     const warp = this.warp;
+    const chain = this.chain;
+    const de = getCpuDe(formula);
     // One closure per ray, not per step: the warped path used to rebuild the raw-DE
     // wrapper on every sample() call - tens of thousands of allocations per frame
-    // during a dive.
-    const rawDe = (x: number, y: number, z: number): number => de(x, y, z, params);
+    // during a dive. A chain marches its interpreter (boosted iteration count from params,
+    // exactly as the atomic path boosts gIters); otherwise the formula's f64 mirror.
+    const rawDe = chain
+      ? (x: number, y: number, z: number): number => chainDe(chain, x, y, z, params.iterations)
+      : (x: number, y: number, z: number): number => de(x, y, z, params);
     const sample = warp
       ? (x: number, y: number, z: number): number => warpCpuDe(rawDe, warp, x, y, z)
       : rawDe;
+    // Aggressive chains can raise the field's Lipschitz constant above 1; tighten the
+    // over-relaxation so the march stays conservative, and grow the step budget by the same
+    // factor so the smaller steps still reach a distant surface (the GPU march does the same
+    // via marchSteps * chainBoost - without it the pin can exhaust its budget and no-op on
+    // exactly the chains that most need it). warpStepBoost is the warp-side analogue.
+    const stepScale = chain ? chainStepScale(chain) : 1;
+    const relax = 0.9 / stepScale;
+    const steps = Math.round(MARCH_STEPS * stepScale);
     const ro = this.marchRo
       .copy(cam)
       .applyMatrix3(this.basis)
@@ -331,11 +358,11 @@ export class DiveController {
     // Fractal-space growth margin: surface growth displaces the GPU surface outward,
     // so rays must stop that much earlier than the bare formula DE says.
     const margin = this.growthMargin * s;
-    for (let i = 0; i < MARCH_STEPS && t < maxT; i += 1) {
+    for (let i = 0; i < steps && t < maxT; i += 1) {
       const d = sample(ro.x + rd.x * t, ro.y + rd.y * t, ro.z + rd.z * t) - margin;
       if (!Number.isFinite(d)) return null;
       if (d < 1e-3 * t + 1e-30) return t / s;
-      t += d * 0.9;
+      t += d * relax;
     }
     return null;
   }

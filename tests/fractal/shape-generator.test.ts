@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   GENERATOR_BASELINES,
   mutateFormulaSettings,
+  rollChain,
+  rollChainShape,
   rollShape,
+  seedChainTrap,
 } from "../../src/fractal/shape-generator";
+import { chainDe } from "../../src/fractal/chain";
 import { FORMULAS, getFormula } from "../../src/fractal/registry";
+import { getTransform } from "../../src/fractal/transforms";
+import { CHAIN_MAX_ITERATIONS, CHAIN_MAX_STAGES } from "../../src/fractal/chain";
+import { BLOOM_BULB } from "../../src/fractal/shapes";
 import type { FractalFormulaId } from "../../src/fractal/types";
 
 /** Deterministic [0,1) RNG (mulberry32) so generator output is reproducible in tests. */
@@ -91,6 +98,78 @@ describe("rollShape", () => {
       expect(value).toBeGreaterThanOrEqual(param.min);
       expect(value).toBeLessThanOrEqual(param.max);
     }
+  });
+});
+
+describe("rollChain / rollChainShape (Phase 2 generator)", () => {
+  it("is deterministic for a given rng seed", () => {
+    expect(rollChain(seeded(42))).toEqual(rollChain(seeded(42)));
+  });
+
+  it("rolls a registry-valid chain within the stage and iteration caps", () => {
+    for (const seed of [1, 7, 42, 99, 1000]) {
+      const chain = rollChain(seeded(seed));
+      expect(chain.stages.length).toBeGreaterThanOrEqual(2);
+      expect(chain.stages.length).toBeLessThanOrEqual(CHAIN_MAX_STAGES);
+      expect(chain.iterations).toBeLessThanOrEqual(CHAIN_MAX_ITERATIONS);
+      // Never a pure rigid motion: at least one structure-forming operator.
+      expect(chain.stages.some((s) => s.transform !== "rotate")).toBe(true);
+      for (const stage of chain.stages) {
+        for (const p of getTransform(stage.transform).params) {
+          const v = stage.values[p.key]!;
+          expect(v).toBeGreaterThanOrEqual(p.min);
+          expect(v).toBeLessThanOrEqual(p.max);
+        }
+      }
+    }
+  });
+
+  it("produces a finite distance everywhere across a wide seed fuzz (marcher NaN-free invariant)", () => {
+    // Fuzz hundreds of seeds, not a handful: stacking expansive stages (esp. multiple bulbPow)
+    // in one chain can compound to Inf/NaN within a single iteration, before the next iteration's
+    // bailout check fires. A 5-seed test gave false green; this is the real coverage. Probes
+    // include exterior points (large radius), where escape-time divergence shows up.
+    const probes = [
+      [2, 0, 0],
+      [0.5, 0.5, 0.5],
+      [-1.2, 0.3, 0.8],
+      [0.01, 0.01, 0.01],
+      [3, -2, 1],
+      [1.5, 1.5, 1.5],
+    ] as const;
+    for (let seed = 0; seed < 500; seed += 1) {
+      const chain = rollChain(seeded(seed));
+      for (const [x, y, z] of probes) {
+        const d = chainDe(chain, x, y, z);
+        expect(
+          Number.isFinite(d),
+          `seed ${seed} ${chain.stages.map((s) => s.transform).join(">")} @ ${x},${y},${z} = ${d}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("seeds a bulb-family trap when the chain has a bulb lobe", () => {
+    const bulbChain = {
+      stages: [{ transform: "bulbPow" as const, values: { power: 8 } }],
+      iterations: 24,
+      addC: true,
+      bailout: 2,
+      deForm: "log" as const,
+    };
+    expect(seedChainTrap(bulbChain)).toEqual({
+      scale: BLOOM_BULB.trap.scale,
+      power: BLOOM_BULB.trap.power,
+    });
+  });
+
+  it("rollChainShape attaches a chain + seeded trap on an outside-looking baseline", () => {
+    const shape = rollChainShape(seeded(5));
+    expect(shape.chain).toBeDefined();
+    expect(shape.trap.scale).toBeGreaterThan(0);
+    expect(shape.name).toBe("Generated Hybrid");
+    // The fallback formula is left intact for builds without chain support.
+    expect(shape.formula).toBe(GENERATOR_BASELINES.mandelbox.formula);
   });
 });
 

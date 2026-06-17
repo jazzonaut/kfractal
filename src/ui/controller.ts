@@ -1,4 +1,6 @@
+import type { TransformId } from "../fractal/transforms";
 import type {
+  ChainDeForm,
   ColorStop,
   FractalFormulaId,
   FractalPreset,
@@ -36,6 +38,14 @@ export interface FormulaParamState {
   readonly max: number;
   readonly step: number;
   value: number;
+}
+
+/** A live, schema-driven hybrid-chain stage: a transform plus its per-stage param controls. */
+export interface ChainStageState {
+  readonly transform: TransformId;
+  /** Transform display name (from the transform registry). */
+  readonly label: string;
+  params: FormulaParamState[];
 }
 
 export type MaterialParamKey =
@@ -171,6 +181,19 @@ export interface WorkstationState {
   iterations: number;
   iterationsMin: number;
   iterationsMax: number;
+  /**
+   * Hybrid formula chain (hybrid-formula-chains design). When `chainActive`, the chain editor
+   * replaces the formula params and the chain supersedes the atomic formula. Stage/param edits
+   * are value edits (uniform-only); add/remove/reorder/transform/addC/bailout/deForm are
+   * structural (recompile the chain pipeline once, then cache).
+   */
+  chainActive: boolean;
+  chainStages: ChainStageState[];
+  /** Re-inject the original c each iteration (escape-time) vs pure IFS. */
+  chainAddC: boolean;
+  /** Escape radius; <= 0 means no bailout (pure fold/IFS), shown as "off" in the editor. */
+  chainBailout: number;
+  chainDeForm: ChainDeForm;
   roughness: number;
   specular: number;
   translucency: number;
@@ -304,6 +327,24 @@ export interface Controller {
   setLook: (id: string) => void;
   setFormulaParam: (key: string, value: number) => void;
   setIterations: (value: number) => void;
+  /** Convert the live shape into a hybrid chain, seeded with a generated starting chain. */
+  startChain: () => void;
+  /** Drop the chain and return to the atomic formula path (view preserved). */
+  removeChain: () => void;
+  /** Append a stage of `transform` (structural; recompiles). No-op at the stage cap. */
+  addChainStage: (transform: TransformId) => void;
+  /** Remove stage `index` (structural). No-op below one stage. */
+  removeChainStage: (index: number) => void;
+  /** Move stage `index` one slot toward the head (-1) or tail (+1) (structural). */
+  moveChainStage: (index: number, dir: -1 | 1) => void;
+  /** Replace stage `index`'s transform, resetting its params to defaults (structural). */
+  setChainStageTransform: (index: number, transform: TransformId) => void;
+  /** Edit a stage param value (uniform-only; no recompile). */
+  setChainStageParam: (index: number, key: string, value: number) => void;
+  setChainAddC: (value: boolean) => void;
+  /** Escape radius; <= 0 disables the bailout (structural). */
+  setChainBailout: (value: number) => void;
+  setChainDeForm: (value: ChainDeForm) => void;
   setMaterialParam: (key: MaterialParamKey, value: number) => void;
   /** Per-light numeric props; `index` into `state.lights`. */
   setLightParam: (index: number, key: LightParamKey, value: number) => void;

@@ -14,13 +14,17 @@ import { ENVIRONMENTS } from "./environments";
 import { LOOKS } from "./looks";
 import { PRESETS } from "./presets";
 import { getFormula } from "./registry";
+import { BULB_FALLBACK_BAILOUT, CHAIN_MAX_ITERATIONS, chainNeedsBailout } from "./chain";
+import { getTransform } from "./transforms";
 import { SHAPES } from "./shapes";
 import { loadUserLibrary } from "./user-library";
 import { autoQualityDefault } from "../render/preview-quality";
 import { defaultWarp, isWarpOff } from "./warp";
 import { glassParams } from "./types";
+import type { TransformId } from "./transforms";
 import type {
   EffectsSettings,
+  FormulaChain,
   FractalPreset,
   FractalShape,
   LightSource,
@@ -28,7 +32,7 @@ import type {
   SkySettings,
   WarpSettings,
 } from "./types";
-import type { WorkstationState } from "../ui/controller";
+import type { ChainStageState, WorkstationState } from "../ui/controller";
 
 /** Read the persisted control sensitivity, clamped to range; default on missing/garbage. */
 function loadControlSensitivity(): number {
@@ -65,6 +69,59 @@ let stopIdSeq = 0;
 export function nextPaletteStopId(): string {
   stopIdSeq += 1;
   return `stop-${stopIdSeq}`;
+}
+
+/** Build the live editor state for one chain stage from a transform's param schema. */
+export function chainStageStateFor(transform: TransformId): ChainStageState {
+  const def = getTransform(transform);
+  return {
+    transform,
+    label: def.name,
+    params: def.params.map((p) => ({
+      key: p.key,
+      label: p.label,
+      description: p.description,
+      min: p.min,
+      max: p.max,
+      step: p.step,
+      value: p.defaultValue,
+    })),
+  };
+}
+
+/** Editor state for a whole chain, seeding each stage's param values from the chain. */
+function chainStagesState(chain: FormulaChain): ChainStageState[] {
+  return chain.stages.map((stage) => {
+    const base = chainStageStateFor(stage.transform);
+    return {
+      ...base,
+      params: base.params.map((p) => ({ ...p, value: stage.values[p.key] ?? p.value })),
+    };
+  });
+}
+
+/** Rebuild a FormulaChain from the live editor state (the inverse of chainStagesState). */
+function chainFromState(state: WorkstationState): FormulaChain {
+  const stages = state.chainStages.map((s) => ({
+    transform: s.transform,
+    values: Object.fromEntries(s.params.map((p) => [p.key, p.value])),
+  }));
+  // The editor carries "no bailout" as <= 0 (a slider floor); the chain wants Infinity - except a
+  // bulb stage with no bailout diverges to a NaN DE on the GPU, so force a finite one there
+  // (mirrors clampChain on the import path).
+  const noBailout = state.chainBailout <= 0;
+  const bailout = noBailout
+    ? chainNeedsBailout(stages)
+      ? BULB_FALLBACK_BAILOUT
+      : Infinity
+    : state.chainBailout;
+  return {
+    stages,
+    iterations: state.iterations,
+    addC: state.chainAddC,
+    bailout,
+    deForm: state.chainDeForm,
+  };
 }
 
 /**
@@ -109,6 +166,11 @@ export function createWorkstationState(
     iterations: shape.formulaSettings.iterations,
     iterationsMin: initialIters.min,
     iterationsMax: initialIters.max,
+    chainActive: false,
+    chainStages: [],
+    chainAddC: true,
+    chainBailout: 0,
+    chainDeForm: "linear",
     roughness: look.material.roughness,
     specular: look.material.specular,
     translucency: look.material.translucency,
@@ -231,6 +293,15 @@ export interface StateBridge {
   readonly syncDiveWarp: (warp: WarpSettings) => void;
   /** Generate (or fetch the cached) environment map for an id and apply it when still current. */
   readonly ensureEnvironment: (id: string) => void;
+  /** Enter chain mode with a starting chain: build editor state, compile + push, dive sync. */
+  readonly enterChain: (chain: FormulaChain) => void;
+  /** Leave chain mode: restore the atomic formula pipeline + uniforms (view preserved). */
+  readonly exitChain: () => void;
+  /** Re-push the live chain editor state to the GPU + dive (value edits hit the material cache;
+   * structural edits recompile once). View-preserving; no camera/dive-pose reset. */
+  readonly syncChain: () => void;
+  /** Value-edit variant of syncChain: pushes stage param values only (no recompile/material swap). */
+  readonly syncChainValues: () => void;
 }
 
 export function createStateBridge(deps: {
@@ -332,6 +403,66 @@ export function createStateBridge(deps: {
   const syncDiveWarp = (warp: WarpSettings): void => {
     dive.warp = isWarpOff(warp) ? null : warp;
   };
+  // Push the live chain editor state to the GPU (applyChain recompiles only when the compiled
+  // DE string changes - i.e. on a structural edit; value edits hit the material cache) and to
+  // the dive's f64 mirror. View-preserving: no camera/dive-pose reset, unlike applyShape.
+  const syncChain = (): void => {
+    const chain = chainFromState(state);
+    fractal.applyChain(chain);
+    dive.chain = chain;
+    resetAccumulation();
+  };
+  // Value-edit hot path (slider drags): push stage param values to gStageP only - no
+  // compileChainDE, no material swap - since a value edit leaves the compiled DE (and thus the
+  // active pipeline) unchanged. The dive's f64 mirror still needs the fresh values.
+  const syncChainValues = (): void => {
+    const chain = chainFromState(state);
+    fractal.applyChainValues(chain);
+    dive.chain = chain;
+    resetAccumulation();
+  };
+  const enterChain = (chain: FormulaChain): void => {
+    // The live chain lives in state.chain* (authoritative for the editor + snapshotShape) and on
+    // dive.chain / fractal.activeChainDE (the render+steer path). It is deliberately NOT written
+    // back onto engine.shape.chain - only applyShape sets that, on apply/import - so engine.shape
+    // is not the source of truth for a chain authored mid-session; read state.chainActive.
+    state.chainActive = true;
+    state.chainStages = chainStagesState(chain);
+    state.chainAddC = chain.addC;
+    state.chainBailout = Number.isFinite(chain.bailout) ? chain.bailout : 0;
+    state.chainDeForm = chain.deForm;
+    state.iterations = Math.min(CHAIN_MAX_ITERATIONS, Math.max(1, Math.round(chain.iterations)));
+    state.iterationsMin = 1;
+    state.iterationsMax = CHAIN_MAX_ITERATIONS;
+    // Switching geometry families resets the deep-zoom frame (as applyShape does via
+    // dive.restore): the prior formula's accumulated offset/scale/basis is meaningless for the
+    // chain, so marching it in that stale, re-anchored frame would bury the camera.
+    dive.reset();
+    syncChain();
+  };
+  const exitChain = (): void => {
+    state.chainActive = false;
+    state.chainStages = [];
+    dive.chain = null;
+    // Same geometry-switch reset as enterChain: the chain's dived frame is meaningless for the
+    // atomic formula we're returning to.
+    dive.reset();
+    // Restore the atomic formula's uniforms from the still-live formula params + its registry
+    // iteration range, then swap back to the formula's cached pipeline.
+    const def = getFormula(engine.shape.formula);
+    const slots: [number, number, number, number] = [0, 0, 0, 0];
+    for (const param of def.params) {
+      slots[param.slot] =
+        state.formulaParams.find((p) => p.key === param.key)?.value ?? param.defaultValue;
+    }
+    fractal.uniforms.formulaP.value.set(slots[0], slots[1], slots[2], slots[3]);
+    state.iterationsMin = def.iterations.min;
+    state.iterationsMax = def.iterations.max;
+    state.iterations = Math.min(def.iterations.max, Math.max(def.iterations.min, state.iterations));
+    fractal.uniforms.iterations.value = state.iterations;
+    fractal.setFormula(engine.shape.formula);
+    resetAccumulation();
+  };
   const ensureEnvironment = (id: string): void => {
     environments
       .load(id)
@@ -354,6 +485,9 @@ export function createStateBridge(deps: {
     stage.applyPreset(shape.camera);
     // The saved pose only means something inside the dive frame it was captured in.
     dive.restore(shape.dive);
+    // The dive's f64 mirror marches the chain interpreter when a chain is active (null =
+    // atomic formula path), so it steers against the geometry the GPU draws.
+    dive.chain = shape.chain ?? null;
     fractal.applyShape(shape);
     state.formulaName = def.name;
     state.formulaId = shape.formula;
@@ -366,9 +500,17 @@ export function createStateBridge(deps: {
       step: param.step,
       value: shape.formulaSettings.values[param.key] ?? param.defaultValue,
     }));
-    state.iterations = shape.formulaSettings.iterations;
-    state.iterationsMin = def.iterations.min;
-    state.iterationsMax = def.iterations.max;
+    // A chain carries its own (raised) iteration cap; the engine uses state.iterations as the
+    // base count it pushes to the GPU and the dive march each frame, so it must track the chain.
+    state.iterations = shape.chain ? shape.chain.iterations : shape.formulaSettings.iterations;
+    state.iterationsMin = shape.chain ? 1 : def.iterations.min;
+    state.iterationsMax = shape.chain ? CHAIN_MAX_ITERATIONS : def.iterations.max;
+    state.chainActive = !!shape.chain;
+    state.chainStages = shape.chain ? chainStagesState(shape.chain) : [];
+    state.chainAddC = shape.chain ? shape.chain.addC : true;
+    state.chainBailout =
+      shape.chain && Number.isFinite(shape.chain.bailout) ? shape.chain.bailout : 0;
+    state.chainDeForm = shape.chain ? shape.chain.deForm : "linear";
     state.focusDistance = shape.focusDistance;
     state.trapScale = shape.trap.scale;
     state.trapPower = shape.trap.power;
@@ -520,13 +662,21 @@ export function createStateBridge(deps: {
     const shape = engine.shape;
     const diveFrame = dive.frame();
     const warp = liveWarp();
+    // While a chain is active, state.iterations is the CHAIN's count (up to CHAIN_MAX_ITERATIONS),
+    // not the fallback formula's. Persist a value in the formula's registry range so the
+    // best-effort `formula`/`formulaSettings` fallback (used by builds without chain support, or
+    // after clampChain drops the chain) is meaningful rather than an out-of-range count.
+    const itRange = getFormula(shape.formula).iterations;
+    const fallbackIters = state.chainActive
+      ? Math.min(itRange.max, Math.max(itRange.min, state.iterations))
+      : state.iterations;
     return {
       id,
       name,
       description,
       formula: shape.formula,
       formulaSettings: {
-        iterations: state.iterations,
+        iterations: fallbackIters,
         values: Object.fromEntries(state.formulaParams.map((param) => [param.key, param.value])),
       },
       camera: {
@@ -540,6 +690,9 @@ export function createStateBridge(deps: {
       focusDistance: state.focusDistance,
       render: { ...shape.render },
       trap: { scale: state.trapScale, power: state.trapPower },
+      // The chain supersedes formula/formulaSettings when active; the latter stay as the
+      // best-effort fallback for builds without chain support.
+      ...(state.chainActive ? { chain: chainFromState(state) } : {}),
       ...(isWarpOff(warp) ? {} : { warp }),
       ...(diveFrame ? { dive: diveFrame } : {}),
     };
@@ -621,5 +774,9 @@ export function createStateBridge(deps: {
     liveWarp,
     syncDiveWarp,
     ensureEnvironment,
+    enterChain,
+    exitChain,
+    syncChain,
+    syncChainValues,
   };
 }

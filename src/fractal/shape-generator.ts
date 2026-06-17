@@ -1,4 +1,6 @@
+import { clampChain } from "./chain";
 import { FORMULAS, getFormula } from "./registry";
+import { getTransform, TRANSFORM_LIST } from "./transforms";
 import {
   AMAZING_SPIRE,
   BICOMPLEX_DRIFT,
@@ -19,7 +21,8 @@ import {
   THORN_RELIQUARY,
   WISP_BLOOM,
 } from "./shapes";
-import type { FormulaSettings, FractalFormulaId, FractalShape } from "./types";
+import type { TransformId } from "./transforms";
+import type { FormulaChain, FormulaSettings, FractalFormulaId, FractalShape } from "./types";
 
 /**
  * Shape generator (ADR-0011): pure random rolling and mutation over the formula
@@ -110,6 +113,80 @@ export function rollShape(args: {
     name: `Generated ${def.name}`,
     description: "",
     formulaSettings: { iterations, values },
+  };
+}
+
+// Structure-forming transforms: a chain of only rotations is a rigid no-op, so a rolled
+// chain always contains at least one of these (the silhouette-setters).
+const STRUCTURE_TRANSFORMS: readonly TransformId[] = ["boxFold", "scaleAddC", "bulbPow"];
+
+/**
+ * Roll a random hybrid formula chain (hybrid-formula-chains design, Phase 2): 2-4 stages of
+ * random transforms with params drawn from each transform's schema, guaranteed to include a
+ * structure-forming operator. addC is always on (escape-time reinjection); a chain with a
+ * bulb lobe gets a finite bailout (and may use the sharper log DE), pure fold/IFS chains run
+ * unbounded under the linear DE. The result is clamped to registry-safe ranges.
+ */
+export function rollChain(rng: Rng = Math.random): FormulaChain {
+  const ids = TRANSFORM_LIST.map((t) => t.id);
+  const length = 2 + Math.floor(rng() * 3); // 2..4 stages
+  const rollStage = (id: TransformId) => ({
+    transform: id,
+    values: Object.fromEntries(
+      getTransform(id).params.map((p) => [
+        p.key,
+        snapToStep(p.min + rng() * (p.max - p.min), p.min, p.step),
+      ]),
+    ),
+  });
+  // First stage is always structure-forming so the chain is never a pure rigid motion.
+  const stages = [
+    rollStage(STRUCTURE_TRANSFORMS[Math.floor(rng() * STRUCTURE_TRANSFORMS.length)]!),
+  ];
+  // Cap bulb stages at one: two+ bulbPow stages compound within a single iteration
+  // ((p^8)^8...) and overflow to Inf/NaN before the next iteration's bailout check fires - a
+  // garbage DE (~0.5% of unconstrained rolls). One bulb, bounded by the bailout, is well-behaved.
+  for (let i = 1; i < length; i += 1) {
+    const hasBulb = stages.some((s) => s.transform === "bulbPow");
+    const pool = hasBulb ? ids.filter((id) => id !== "bulbPow") : ids;
+    stages.push(rollStage(pool[Math.floor(rng() * pool.length)]!));
+  }
+  const hasBulb = stages.some((s) => s.transform === "bulbPow");
+  const chain: FormulaChain = {
+    stages,
+    iterations: 24 + Math.floor(rng() * 40), // 24..63: well into the raised cap
+    addC: true,
+    bailout: hasBulb ? 2 + rng() * 6 : Infinity,
+    deForm: hasBulb && rng() < 0.5 ? "log" : "linear",
+  };
+  // rollStage always yields registry-valid stages, so clampChain never returns null here.
+  return clampChain(chain) ?? chain;
+}
+
+/**
+ * Seed a chain's orbit-trap mapping (design §4): the raw trap range depends on the operator
+ * mix, so a fresh chain borrows the trap of the curated shape whose DE family it most
+ * resembles - a bulb lobe traps like the Mandelbulb, everything else like the Mandelbox.
+ */
+export function seedChainTrap(chain: FormulaChain): { scale: number; power: number } {
+  const ref = chain.stages.some((s) => s.transform === "bulbPow") ? BLOOM_BULB : REEF_SPIRES;
+  return { scale: ref.trap.scale, power: ref.trap.power };
+}
+
+/**
+ * Roll a complete generated hybrid-chain shape: a random chain on a generic outside-looking
+ * baseline, with a seeded trap. The atomic `formula` is left as the baseline's (the
+ * best-effort fallback for builds without chain support).
+ */
+export function rollChainShape(rng: Rng = Math.random): FractalShape {
+  const chain = rollChain(rng);
+  return {
+    ...structuredClone(GENERATOR_BASELINES.mandelbox),
+    id: "",
+    name: "Generated Hybrid",
+    description: "",
+    chain,
+    trap: seedChainTrap(chain),
   };
 }
 
