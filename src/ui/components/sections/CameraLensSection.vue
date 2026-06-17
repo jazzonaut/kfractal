@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  CONTROL_SENSITIVITY_MAX,
+  CONTROL_SENSITIVITY_MIN,
+  CONTROL_SENSITIVITY_STEP,
+} from "../../../config/constants";
 import ParamSlider from "../ParamSlider.vue";
 import { useController } from "../../composables/use-controller";
 
@@ -7,6 +12,16 @@ const state = controller.state;
 </script>
 
 <template>
+  <ParamSlider
+    label="Sensitivity"
+    :min="CONTROL_SENSITIVITY_MIN"
+    :max="CONTROL_SENSITIVITY_MAX"
+    :step="CONTROL_SENSITIVITY_STEP"
+    :model-value="state.controlSensitivity"
+    description="How far the camera responds to a drag, wheel, or pinch - scales orbit, pan, roll, and zoom together, for both mouse and touch. 1 is the default feel."
+    testid="param-control-sensitivity"
+    @update:model-value="controller.setControlSensitivity($event)"
+  />
   <ParamSlider
     label="FOV"
     :min="20"

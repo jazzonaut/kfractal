@@ -48,6 +48,23 @@ const showFullscreen = computed(() => fullscreenSupported.value && isTouch.value
     />
     <label
       v-tooltip.top="
+        'Deep-zoom dive: scrolling performs an infinite zoom into surface detail. Off makes the wheel fly the camera through surfaces instead.'
+      "
+      :class="
+        stacked
+          ? 'flex cursor-pointer items-center justify-between gap-2 text-muted-color'
+          : 'flex cursor-pointer items-center gap-2 text-muted-color'
+      "
+    >
+      Dive
+      <ToggleSwitch
+        :model-value="state.diveEnabled"
+        data-testid="dive-enabled-toggle"
+        @update:model-value="controller.setDiveEnabled($event)"
+      />
+    </label>
+    <label
+      v-tooltip.top="
         'Lower the live preview resolution when the device cannot keep up. Render and export stay full quality.'
       "
       :class="
