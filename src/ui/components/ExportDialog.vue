@@ -41,7 +41,7 @@ const SSAA_OPTIONS = [
   { label: "2×", value: 2 },
   { label: "4×", value: 4 },
 ];
-const format = ref<ExportFormat>("png");
+const format = ref<ExportFormat>("jpeg");
 const quality = ref(DEFAULT_JPEG_QUALITY);
 const filename = ref("kfractal");
 

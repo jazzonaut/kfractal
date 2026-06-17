@@ -512,6 +512,18 @@ export class RenderEngine {
         ctx.drawImage(src, 0, 0, options.width, options.height);
         capture = out;
       }
+      // Flatten onto an opaque surface before encoding. The WebGPU canvas carries alpha < 1 in
+      // bright regions; it's invisible on screen (alphaMode 'opaque') and dropped by JPEG, but PNG
+      // keeps it - and a viewer then un-premultiplies and composites those highlights out to white
+      // (a blown-out export). Compositing over an opaque (alpha:false) context drops alpha the same
+      // way the working JPEG path does, so PNG matches the screen.
+      const flat = document.createElement("canvas");
+      flat.width = options.width;
+      flat.height = options.height;
+      const fctx = flat.getContext("2d", { alpha: false });
+      if (!fctx) return { ok: false, error: "Could not allocate the export canvas." };
+      fctx.drawImage(capture, 0, 0);
+      capture = flat;
       const blob = await new Promise<Blob | null>((resolve) =>
         capture.toBlob(resolve, mime, options.quality),
       );
