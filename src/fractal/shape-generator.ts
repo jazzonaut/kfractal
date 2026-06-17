@@ -1,4 +1,4 @@
-import { clampChain, frameFromExtent, probeChainExtent } from "./chain";
+import { CHAIN_MAX_STAGES, clampChain, frameFromExtent, probeChainExtent } from "./chain";
 import { FORMULAS, getFormula } from "./registry";
 import { getTransform, TRANSFORM_LIST } from "./transforms";
 import {
@@ -120,22 +120,46 @@ export function rollShape(args: {
 // to a fixed point (dr stops growing) and no surface forms. Matches the rendered-shape evidence.
 const MIN_DRIVER_SCALE = 1.3;
 
+// Transforms that carve angular/cellular relief rather than inflating a round blob. An escape-time
+// chain with none of these is a bare sphere (linear map) or a rounded bulb; forcing one in gives
+// it structure (mandelbox cells, etc).
+const FOLD_TRANSFORMS: readonly TransformId[] = [
+  "boxFold",
+  "sphereFold",
+  "mengerFold",
+  "kifsFold",
+  "latticeFold",
+];
+
+/**
+ * Fraction of rolls that are pure-IFS attractors (addC off) rather than escape-time sets. This is
+ * the lever for shape variety: escape-time sets are blobs (the bailout is a radius, so the gross
+ * silhouette is a textured ball), whereas a pure-IFS iteration converges onto a crisp, angular
+ * limit set - Menger sponges, Apollonian foam - that escape-time mode simply cannot form. Roughly
+ * half-and-half gives both families. Tunable.
+ */
+const IFS_CHAIN_FRACTION = 0.45;
+
 /**
  * Roll a random hybrid formula chain (hybrid-formula-chains design, Phase 2): 2-4 stages of
- * random transforms with params drawn from each transform's schema. addC is always on (escape-time
- * reinjection); a chain with a bulb lobe gets a finite bailout (and may use the sharper log DE),
- * pure fold/IFS chains run unbounded under the linear DE. The result is clamped to registry-safe
- * ranges.
+ * random transforms with params drawn from each transform's schema, in one of two modes.
  *
- * The first stage is always a derivative-growing DRIVER - a bulb power, or a scale with magnitude
- * past MIN_DRIVER_SCALE. This is the renderability hinge: the chain DE is length(p)/dr, so without
+ * Both modes guarantee a derivative-growing DRIVER (a bulb power, a scale past MIN_DRIVER_SCALE, or
+ * a sphere inversion). This is the renderability hinge: the chain DE is length(p)/dr, so without
  * something to grow dr (folds, rotations and lattice reflections are isometries that leave dr~=1)
- * the DE stays a bounded constant that never resolves to a surface and nothing renders. Forcing a
- * driver roughly halves the dead-roll rate; rollChainShape re-rolls away the remainder.
+ * the DE stays a bounded constant that never resolves to a surface and nothing renders.
+ *
+ *  - ESCAPE-TIME (addC on): driver + a guaranteed fold so a scale-driven chain gets relief instead
+ *    of staying a bare sphere. Bulb chains get a finite bailout (and may use the sharper log DE);
+ *    others run unbounded under the linear DE.
+ *  - PURE-IFS (addC off): a scale/inversion driver + a translation-bearing structural fold
+ *    (mengerFold's offset, or latticeFold's periodic wrap) converging onto an angular attractor,
+ *    parameterised from the curated MENGER_SPIRE / KLEIN_FOAM. A finite bailout bounds the basin.
+ *
+ * The result is clamped to registry-safe ranges; rollChainShape re-rolls the few that frame badly.
  */
 export function rollChain(rng: Rng = Math.random): FormulaChain {
   const ids = TRANSFORM_LIST.map((t) => t.id);
-  const length = 2 + Math.floor(rng() * 3); // 2..4 stages
   const rollStage = (id: TransformId) => ({
     transform: id,
     values: Object.fromEntries(
@@ -145,25 +169,70 @@ export function rollChain(rng: Rng = Math.random): FormulaChain {
       ]),
     ),
   });
-  // Driver: a bulb power, or a scale forced past the divergence threshold (random sign), clamped
-  // to the scaleAddC schema range.
-  const rollDriver = () => {
-    if (rng() < 0.5) return rollStage("bulbPow");
-    const def = getTransform("scaleAddC").params[0]!;
-    const signed = (rng() < 0.5 ? 1 : -1) * (MIN_DRIVER_SCALE + rng() * (3 - MIN_DRIVER_SCALE));
-    return {
-      transform: "scaleAddC" as TransformId,
-      values: { scale: clamp(snapToStep(signed, def.min, def.step), def.min, def.max) },
+  const scaleDef = getTransform("scaleAddC").params[0]!;
+  const scaleStage = (lo: number, hi: number) => ({
+    transform: "scaleAddC" as TransformId,
+    values: {
+      scale: clamp(
+        snapToStep(lo + rng() * (hi - lo), scaleDef.min, scaleDef.step),
+        scaleDef.min,
+        scaleDef.max,
+      ),
+    },
+  });
+  const pick = <T>(pool: readonly T[]): T => pool[Math.floor(rng() * pool.length)]!;
+
+  if (rng() < IFS_CHAIN_FRACTION) {
+    // Pure-IFS attractor. Two archetypes; the structural fold carries the translation an IFS needs
+    // (mengerFold's offset / latticeFold's wrap), so the limit set isn't a point at the origin.
+    const stages =
+      rng() < 0.5
+        ? [rollStage("mengerFold"), scaleStage(1.8, 3)] // spun Menger lattice (MENGER_SPIRE-like)
+        : [rollStage("latticeFold"), rollStage("sphereInvert")]; // Apollonian foam (KLEIN_FOAM-like)
+    // 0-2 extra structural/rigid stages for variety (no bulb - that's the round escape-time lobe).
+    const extraPool: readonly TransformId[] = [
+      "rotate",
+      "mengerFold",
+      "kifsFold",
+      "boxFold",
+      "sphereInvert",
+      "latticeFold",
+      "sinWarp",
+    ];
+    const extra = Math.floor(rng() * 3);
+    for (let i = 0; i < extra && stages.length < CHAIN_MAX_STAGES; i += 1) {
+      stages.push(rollStage(pick(extraPool)));
+    }
+    const chain: FormulaChain = {
+      stages,
+      iterations: 12 + Math.floor(rng() * 20), // 12..31: IFS detail converges fast
+      addC: false,
+      // Finite bailout: escaping (off-attractor) points break early, so the f64 interpreter never
+      // overflows and the rendered surface is the attractor's outer boundary.
+      bailout: 4 + rng() * 8,
+      deForm: "linear",
     };
-  };
-  const stages = [rollDriver()];
-  // Cap bulb stages at one: two+ bulbPow stages compound within a single iteration
-  // ((p^8)^8...) and overflow to Inf/NaN before the next iteration's bailout check fires - a
-  // garbage DE (~0.5% of unconstrained rolls). One bulb, bounded by the bailout, is well-behaved.
+    return clampChain(chain) ?? chain;
+  }
+
+  // Escape-time set.
+  const length = 2 + Math.floor(rng() * 3); // 2..4 stages
+  // Driver: a bulb power, or a scale forced past the divergence threshold. scaleStage yields a
+  // positive scale; flip half negative (the carved, inside-out mandelbox look) for variety.
+  const stages = [rng() < 0.5 ? rollStage("bulbPow") : scaleStage(MIN_DRIVER_SCALE, 3)];
+  if (stages[0]!.transform === "scaleAddC" && rng() < 0.5) {
+    stages[0]!.values.scale = clamp(-stages[0]!.values.scale!, scaleDef.min, scaleDef.max);
+  }
+  // Cap bulb stages at one: two+ bulbPow stages compound within a single iteration ((p^8)^8...) and
+  // overflow to Inf/NaN before the next iteration's bailout check fires. One bulb is well-behaved.
   for (let i = 1; i < length; i += 1) {
     const hasBulb = stages.some((s) => s.transform === "bulbPow");
     const pool = hasBulb ? ids.filter((id) => id !== "bulbPow") : ids;
-    stages.push(rollStage(pool[Math.floor(rng() * pool.length)]!));
+    stages.push(rollStage(pick(pool)));
+  }
+  // Guarantee a fold so a scale-driven chain carries relief rather than rendering a smooth sphere.
+  if (!stages.some((s) => FOLD_TRANSFORMS.includes(s.transform))) {
+    stages[1] = rollStage(pick(FOLD_TRANSFORMS));
   }
   const hasBulb = stages.some((s) => s.transform === "bulbPow");
   const chain: FormulaChain = {
