@@ -9,8 +9,10 @@ import { float, mix, texture, uniform, uv, vec2 } from "three/tsl";
  * Runs N dilated 5x5 B3-spline passes over the accumulated linear-HDR mean, weighting each
  * tap by primary-hit feature similarity (normal, depth, albedo) so geometry and orbit-trap
  * texture edges stay sharp while low-sample Monte Carlo grain smooths out. Filter strength
- * fades with the sample count and the final pass blends back toward the raw mean, so a
- * converged render passes through untouched.
+ * fades with the sample count and the final pass blends back toward the raw mean, easing to a
+ * light residual floor (not zero): indirect/glow-dominated scenes still carry visible MC grain
+ * even at a "converged" sample count, so a gentle filter always rides along to keep highlights
+ * and bloom falloff smooth without softening geometry edges (those are feature-weighted).
  *
  * Orientation note (see AccumulationBuffer): RT-to-RT passes store output V-flipped relative
  * to texture() sampling. The color input (accumulation output, already flip-compensated
@@ -24,8 +26,12 @@ const KERNEL_1D = [1 / 16, 1 / 4, 3 / 8, 1 / 4, 1 / 16];
 const STEPS = [1, 2, 4, 8];
 /** Below this sample count the filter runs at full strength… */
 const FULL_STRENGTH_SAMPLES = 64;
-/** …and by this count it has faded out entirely. */
-const ZERO_STRENGTH_SAMPLES = 512;
+/** …easing to the residual floor by this count. Pushed well past the default export cap (512)
+ *  so a typical export still gets most of the filter — at 512 it lands at ~0.82, not 0. */
+const FLOOR_STRENGTH_SAMPLES = 2048;
+/** The residual strength a fully converged render keeps: never fully raw, so indirect/bloom
+ *  grain stays suppressed. Light enough that feature-weighted edges read sharp. */
+const MIN_STRENGTH = 0.2;
 
 function makeTarget(width: number, height: number): THREE.RenderTarget {
   return new THREE.RenderTarget(width, height, {
@@ -120,15 +126,17 @@ export class AtrousDenoiser {
     this.scene.add(mesh);
   }
 
-  /** 1 = full filtering, 0 = bypass; eases out as the mean converges. */
+  /** 1 = full filtering, {@link MIN_STRENGTH} = residual floor; eases out as the mean converges. */
   static strength(samples: number): number {
-    const t = (ZERO_STRENGTH_SAMPLES - samples) / (ZERO_STRENGTH_SAMPLES - FULL_STRENGTH_SAMPLES);
-    return Math.min(1, Math.max(0, t));
+    const t = (FLOOR_STRENGTH_SAMPLES - samples) / (FLOOR_STRENGTH_SAMPLES - FULL_STRENGTH_SAMPLES);
+    const eased = Math.min(1, Math.max(0, t));
+    return MIN_STRENGTH + (1 - MIN_STRENGTH) * eased;
   }
 
   /**
-   * Filter the accumulated mean; returns the texture the post chain should read.
-   * Returns `source` untouched once the fade has reached zero.
+   * Filter the accumulated mean; returns the texture the post chain should read. With a non-zero
+   * {@link MIN_STRENGTH} this always filters (the floor never reaches the bypass); the guard only
+   * fires if the floor is configured to zero, where a converged render passes through untouched.
    */
   run(renderer: THREE.WebGPURenderer, source: THREE.Texture, samples: number): THREE.Texture {
     const strength = AtrousDenoiser.strength(samples);
