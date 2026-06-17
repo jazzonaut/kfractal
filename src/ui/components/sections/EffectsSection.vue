@@ -38,6 +38,16 @@ const state = controller.state;
     testid="param-fog-color"
     @update:model-value="controller.setFogColor($event)"
   />
+  <ParamSlider
+    label="Sky haze"
+    :min="0"
+    :max="1"
+    :step="0.01"
+    :model-value="state.fogSkyHaze"
+    description="Aerial perspective: how strongly distant structure dissolves into the sky colour behind it. Needs some fog density to act."
+    testid="param-fog-sky-haze"
+    @update:model-value="controller.setFogParam('skyHaze', $event)"
+  />
   <label
     v-tooltip.left="
       'Off: an infinite ground layer. On: a placeable blob you position over part of the scene, fixed relative to the camera. Works best for large, soft pockets in open space; small pockets near detailed structure can shimmer or pop.'

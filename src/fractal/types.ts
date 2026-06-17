@@ -109,6 +109,17 @@ export interface MaterialSettings {
   refraction?: number;
   /** Per-channel IOR spread driving chromatic dispersion through the glass lobe (0 = none). */
   dispersion?: number;
+  /**
+   * Triplanar spatial-colour amount 0..1: position-driven hue variation blended into the
+   * orbit-trap palette coordinate so colour reads across the structure. Absent/0 = off.
+   */
+  triplanarAmount?: number;
+  /** Triplanar feature frequency in fractal space (defaults to 1.5 when absent). */
+  triplanarScale?: number;
+  /** Cavity colour shift -1..1: occluded recesses sample a shifted palette position. */
+  cavityShift?: number;
+  /** Cavity roughness shift -1..1: occlusion nudges roughness (matte recesses / glossy ridges). */
+  cavityRoughness?: number;
   emissionStrength: number;
   readonly emissionColor: string;
 }
@@ -202,6 +213,12 @@ export interface FogSettings {
   pocketRadius?: number;
   /** Pocket edge softness 0..1: fraction of the radius spent fading density to zero. */
   pocketEdge?: number;
+  /**
+   * Aerial perspective 0..1: how strongly a distant surface fades toward the sky colour
+   * behind it as fog builds with depth. This is the "structure dissolving into luminous
+   * sky" cue; needs some fog density to act. Optional so pre-feature scenes load at 0.
+   */
+  skyHaze?: number;
 }
 
 /** Volumetric aura: rays accumulate emission near the surface during the march. */
@@ -224,6 +241,14 @@ export interface SurfaceFxSettings {
   microScale: number;
   /** How much micro-noise perturbs roughness/albedo, 0..1. */
   microRoughness: number;
+  /**
+   * Art-directed ambient-occlusion crevice darkening, 0..1. Biased on purpose: it
+   * etches recesses harder than physical GI does, for the "crisp" Mandelbulb3D look.
+   * 0 reproduces the pre-AO render exactly.
+   */
+  aoStrength: number;
+  /** Step-count edge emphasis, 0..1: darkens intricate/grazing silhouette detail. */
+  aoEmphasis: number;
 }
 
 export type GrowthMode = "spikes" | "bumps" | "crystals" | "fins";

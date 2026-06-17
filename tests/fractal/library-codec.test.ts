@@ -6,6 +6,7 @@ import {
   clampShapeToRegistry,
   parseLibraryFile,
 } from "../../src/fractal/library-codec";
+import { AO_DEFAULTS } from "../../src/fractal/effects-defaults";
 import { SHAPES } from "../../src/fractal/shapes";
 import { LOOKS } from "../../src/fractal/looks";
 import { PRESETS } from "../../src/fractal/presets";
@@ -48,6 +49,82 @@ describe("buildLibraryFile / parseLibraryFile round-trip", () => {
   it("stamps the current file version on export", () => {
     const envelope = JSON.parse(buildLibraryFile("shape", SHAPES[0]!)) as { version: number };
     expect(envelope.version).toBe(LIBRARY_FILE_VERSION);
+  });
+});
+
+describe("spatial colour / AO / sky-haze fields (proposals #2-#4)", () => {
+  const baseLook = (): Look => clone(LOOKS[0]!);
+
+  it("deep round-trips the new material, AO, and fog fields in range", () => {
+    const base = baseLook();
+    const look: Look = {
+      ...base,
+      material: {
+        ...base.material,
+        triplanarAmount: 0.4,
+        triplanarScale: 3,
+        cavityShift: -0.5,
+        cavityRoughness: 0.6,
+      },
+      effects: {
+        ...base.effects,
+        surface: { ...base.effects.surface, aoStrength: 0.5, aoEmphasis: 0.2 },
+        fog: { ...base.effects.fog, density: 0.05, skyHaze: 0.8 },
+      },
+    };
+    const result = parseLibraryFile(buildLibraryFile("look", look));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "look") {
+      expect(result.item.material.triplanarAmount).toBe(0.4);
+      expect(result.item.material.triplanarScale).toBe(3);
+      expect(result.item.material.cavityShift).toBe(-0.5);
+      expect(result.item.material.cavityRoughness).toBe(0.6);
+      expect(result.item.effects.surface.aoStrength).toBe(0.5);
+      expect(result.item.effects.surface.aoEmphasis).toBe(0.2);
+      expect(result.item.effects.fog.skyHaze).toBe(0.8);
+    }
+  });
+
+  it("clamps out-of-range values to their bounds", () => {
+    const base = baseLook();
+    const look: Look = {
+      ...base,
+      material: {
+        ...base.material,
+        triplanarAmount: 5,
+        cavityShift: -3,
+        cavityRoughness: 9,
+      },
+      effects: {
+        ...base.effects,
+        surface: { ...base.effects.surface, aoStrength: 9, aoEmphasis: -1 },
+        fog: { ...base.effects.fog, skyHaze: 2 },
+      },
+    };
+    const result = parseLibraryFile(buildLibraryFile("look", look));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "look") {
+      expect(result.item.material.triplanarAmount).toBe(1);
+      expect(result.item.material.cavityShift).toBe(-1);
+      expect(result.item.material.cavityRoughness).toBe(1);
+      expect(result.item.effects.surface.aoStrength).toBe(1);
+      expect(result.item.effects.surface.aoEmphasis).toBe(0);
+      expect(result.item.effects.fog.skyHaze).toBe(1);
+    }
+  });
+
+  it("backfills AO_DEFAULTS when a pre-AO look omits the fields", () => {
+    const file = JSON.parse(buildLibraryFile("look", baseLook())) as {
+      item: { effects: { surface: Record<string, unknown> } };
+    };
+    delete file.item.effects.surface.aoStrength;
+    delete file.item.effects.surface.aoEmphasis;
+    const result = parseLibraryFile(JSON.stringify(file));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.kind === "look") {
+      expect(result.item.effects.surface.aoStrength).toBe(AO_DEFAULTS.strength);
+      expect(result.item.effects.surface.aoEmphasis).toBe(AO_DEFAULTS.emphasis);
+    }
   });
 });
 

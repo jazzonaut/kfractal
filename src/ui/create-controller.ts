@@ -218,12 +218,17 @@ export function createController(deps: {
       state[key] = value;
       const matP = fractal.uniforms.matP.value;
       const matQ = fractal.uniforms.matQ.value;
+      const colorP = fractal.uniforms.colorP.value;
       if (key === "roughness") matP.x = value;
       else if (key === "specular") matP.y = value;
       else if (key === "translucency") matP.z = value;
       else if (key === "ior") matP.w = value;
       else if (key === "refraction") matQ.x = value;
       else if (key === "dispersion") matQ.y = value;
+      else if (key === "triplanarAmount") colorP.x = value;
+      else if (key === "triplanarScale") colorP.y = value;
+      else if (key === "cavityShift") colorP.z = value;
+      else if (key === "cavityRoughness") colorP.w = value;
       else fractal.uniforms.emissionP.value.w = value;
       resetAccumulation();
     },
@@ -362,6 +367,7 @@ export function createController(deps: {
       else if (key === "height") state.fogHeight = value;
       else if (key === "anisotropy") state.fogAnisotropy = value;
       else if (key === "level") state.fogLevel = value;
+      else state.fogSkyHaze = value;
       fractal.applyEffects(bridge.liveEffects());
       resetAccumulation();
     },
@@ -418,7 +424,9 @@ export function createController(deps: {
       else if (key === "filmShift") state.filmShift = value;
       else if (key === "rimStrength") state.rimStrength = value;
       else if (key === "microScale") state.microNoiseScale = value;
-      else state.microNoiseRoughness = value;
+      else if (key === "microRoughness") state.microNoiseRoughness = value;
+      else if (key === "aoStrength") state.aoStrength = value;
+      else state.aoEmphasis = value;
       fractal.applyEffects(bridge.liveEffects());
       resetAccumulation();
     },
@@ -560,6 +568,7 @@ export function createController(deps: {
       engine.cancelExport();
     },
     exportImage: (options, onProgress) => engine.exportImage(options, onProgress),
+    maxTextureDimension: engine.maxTextureDimension2D,
     saveUserItem: (kind: LibraryKind, name: string, description: string) => {
       const ops = KIND_OPS[kind];
       const trimmed = name.trim();

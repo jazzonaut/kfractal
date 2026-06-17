@@ -9,7 +9,7 @@ import {
 } from "../config/constants";
 import { EnvironmentManager } from "../render/environment";
 import type { RenderEngine } from "../render/engine";
-import { FOG_DEFAULTS } from "./effects-defaults";
+import { AO_DEFAULTS, FOG_DEFAULTS } from "./effects-defaults";
 import { ENVIRONMENTS } from "./environments";
 import { LOOKS } from "./looks";
 import { PRESETS } from "./presets";
@@ -115,6 +115,10 @@ export function createWorkstationState(
     ior: look.material.ior,
     refraction: glassParams(look.material).refraction,
     dispersion: glassParams(look.material).dispersion,
+    triplanarAmount: look.material.triplanarAmount ?? 0,
+    triplanarScale: look.material.triplanarScale ?? 1.5,
+    cavityShift: look.material.cavityShift ?? 0,
+    cavityRoughness: look.material.cavityRoughness ?? 0,
     emissionStrength: look.material.emissionStrength,
     lights: copyLights(look.lights),
     ambient: look.ambient,
@@ -141,6 +145,7 @@ export function createWorkstationState(
     fogAnisotropy: look.effects.fog.anisotropy,
     fogShape: look.effects.fog.shape ?? FOG_DEFAULTS.shape,
     fogLevel: look.effects.fog.level ?? FOG_DEFAULTS.level,
+    fogSkyHaze: look.effects.fog.skyHaze ?? FOG_DEFAULTS.skyHaze,
     fogPocketX: look.effects.fog.pocketX ?? FOG_DEFAULTS.pocketX,
     fogPocketY: look.effects.fog.pocketY ?? FOG_DEFAULTS.pocketY,
     fogPocketZ: look.effects.fog.pocketZ ?? FOG_DEFAULTS.pocketZ,
@@ -154,6 +159,8 @@ export function createWorkstationState(
     rimStrength: look.effects.surface.rimStrength,
     microNoiseScale: look.effects.surface.microScale,
     microNoiseRoughness: look.effects.surface.microRoughness,
+    aoStrength: look.effects.surface.aoStrength ?? AO_DEFAULTS.strength,
+    aoEmphasis: look.effects.surface.aoEmphasis ?? AO_DEFAULTS.emphasis,
     growthLength: look.effects.growth.length,
     growthDensity: look.effects.growth.density,
     growthMode: look.effects.growth.mode,
@@ -269,6 +276,7 @@ export function createStateBridge(deps: {
       color: state.fogColor,
       shape: state.fogShape,
       level: state.fogLevel,
+      skyHaze: state.fogSkyHaze,
       pocketX: state.fogPocketX,
       pocketY: state.fogPocketY,
       pocketZ: state.fogPocketZ,
@@ -287,6 +295,8 @@ export function createStateBridge(deps: {
       rimStrength: state.rimStrength,
       microScale: state.microNoiseScale,
       microRoughness: state.microNoiseRoughness,
+      aoStrength: state.aoStrength,
+      aoEmphasis: state.aoEmphasis,
     },
     growth: {
       length: state.growthLength,
@@ -388,6 +398,10 @@ export function createStateBridge(deps: {
     const glass = glassParams(look.material);
     state.refraction = glass.refraction;
     state.dispersion = glass.dispersion;
+    state.triplanarAmount = look.material.triplanarAmount ?? 0;
+    state.triplanarScale = look.material.triplanarScale ?? 1.5;
+    state.cavityShift = look.material.cavityShift ?? 0;
+    state.cavityRoughness = look.material.cavityRoughness ?? 0;
     state.emissionStrength = look.material.emissionStrength;
     state.lights = copyLights(look.lights);
     state.ambient = look.ambient;
@@ -423,6 +437,7 @@ export function createStateBridge(deps: {
     state.fogColor = fx.fog.color;
     state.fogShape = fx.fog.shape ?? FOG_DEFAULTS.shape;
     state.fogLevel = fx.fog.level ?? FOG_DEFAULTS.level;
+    state.fogSkyHaze = fx.fog.skyHaze ?? FOG_DEFAULTS.skyHaze;
     state.fogPocketX = fx.fog.pocketX ?? FOG_DEFAULTS.pocketX;
     state.fogPocketY = fx.fog.pocketY ?? FOG_DEFAULTS.pocketY;
     state.fogPocketZ = fx.fog.pocketZ ?? FOG_DEFAULTS.pocketZ;
@@ -548,6 +563,10 @@ export function createStateBridge(deps: {
       ior: state.ior,
       refraction: state.refraction,
       dispersion: state.dispersion,
+      triplanarAmount: state.triplanarAmount,
+      triplanarScale: state.triplanarScale,
+      cavityShift: state.cavityShift,
+      cavityRoughness: state.cavityRoughness,
       emissionStrength: state.emissionStrength,
       emissionColor: state.emissionColor,
     },

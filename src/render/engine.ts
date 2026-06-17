@@ -18,6 +18,7 @@ import {
 import { PostChain } from "./post";
 import { PreviewQuality, initialPreviewScale } from "./preview-quality";
 import { Stage } from "./stage";
+import { effectiveSupersample } from "./supersample";
 
 // Export watchdog floor (see exportImage): the minimum no-progress window before a run is
 // abandoned. The live threshold adapts upward from here to a multiple of the slowest sample
@@ -310,6 +311,21 @@ export class RenderEngine {
     this.exportCancelled = true;
   }
 
+  /**
+   * The GPU's max 2D texture dimension, the ceiling on the supersampled export buffer. Read
+   * defensively through three's internal backend (renamed internals degrade to the 8192 safe
+   * baseline, never throw); single cast site, surfaced to the export dialog via the controller.
+   */
+  get maxTextureDimension2D(): number {
+    return (
+      (
+        this.renderer as unknown as {
+          backend?: { device?: { limits?: { maxTextureDimension2D?: number } } };
+        }
+      ).backend?.device?.limits?.maxTextureDimension2D ?? 8192
+    );
+  }
+
   async exportImage(
     options: ExportOptions,
     onProgress?: (fraction: number) => void,
@@ -329,10 +345,21 @@ export class RenderEngine {
     // divide by zero (NaN) and satisfy `samples >= cap` at sample 0, resolving instantly
     // with a blank/preview frame reported as a successful capture. Floor at 1 real sample.
     const sampleCap = Math.max(1, Math.floor(options.sampleCap));
+    // Supersampling: render larger, downsample on capture. The factor is clamped so the
+    // internal buffer never exceeds the GPU texture limit (see maxTextureDimension2D); the
+    // export dialog's hint computes through the same helper + limit, so they never disagree.
+    const ss = effectiveSupersample(
+      options.width,
+      options.height,
+      options.supersample,
+      this.maxTextureDimension2D,
+    );
+    const renderW = options.width * ss;
+    const renderH = options.height * ss;
     try {
       // 1:1 device pixels so the captured buffer is exactly the requested resolution.
       this.renderer.setPixelRatio(1);
-      this.resize(options.width, options.height, false);
+      this.resize(renderW, renderH, false);
 
       // Kick off a fresh converged run at the export settings. resetAccumulation clears
       // `rendering`, so re-arm it after; the loop accumulates one sample per frame.
@@ -399,8 +426,42 @@ export class RenderEngine {
       // toDataURL relied on) but encodes off the main thread - toDataURL froze the
       // UI for seconds on a 33 MP 8K PNG.
       const mime = options.format === "jpeg" ? "image/jpeg" : "image/png";
+      // Downsample the supersampled buffer to the output size; a 1x export encodes the WebGPU
+      // canvas directly. Halving steps until within 2x of the target keep every drawImage at
+      // a <=2x ratio, where the browser's filter is a reliable box-ish average - a single big
+      // reduction (e.g. 4x in one step) aliases more on some browsers.
+      let capture: HTMLCanvasElement = this.renderer.domElement;
+      if (ss > 1) {
+        let curW = renderW;
+        let curH = renderH;
+        let src: CanvasImageSource = this.renderer.domElement;
+        while (curW > options.width * 2 || curH > options.height * 2) {
+          const nextW = Math.max(options.width, Math.floor(curW / 2));
+          const nextH = Math.max(options.height, Math.floor(curH / 2));
+          const step = document.createElement("canvas");
+          step.width = nextW;
+          step.height = nextH;
+          const sctx = step.getContext("2d");
+          if (!sctx) return { ok: false, error: "Could not allocate the downsample canvas." };
+          sctx.imageSmoothingEnabled = true;
+          sctx.imageSmoothingQuality = "high";
+          sctx.drawImage(src, 0, 0, nextW, nextH);
+          src = step;
+          curW = nextW;
+          curH = nextH;
+        }
+        const out = document.createElement("canvas");
+        out.width = options.width;
+        out.height = options.height;
+        const ctx = out.getContext("2d");
+        if (!ctx) return { ok: false, error: "Could not allocate the downsample canvas." };
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(src, 0, 0, options.width, options.height);
+        capture = out;
+      }
       const blob = await new Promise<Blob | null>((resolve) =>
-        this.renderer.domElement.toBlob(resolve, mime, options.quality),
+        capture.toBlob(resolve, mime, options.quality),
       );
       if (!blob) return { ok: false, error: "Could not encode the image." };
       const url = URL.createObjectURL(blob);

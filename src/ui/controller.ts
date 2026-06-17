@@ -45,6 +45,10 @@ export type MaterialParamKey =
   | "ior"
   | "refraction"
   | "dispersion"
+  | "triplanarAmount"
+  | "triplanarScale"
+  | "cavityShift"
+  | "cavityRoughness"
   | "emissionStrength";
 
 export type LightParamKey = "intensity" | "size" | "falloff";
@@ -57,7 +61,7 @@ export type SkyParamKey =
   | "sunSize"
   | "yaw";
 
-export type FogParamKey = "density" | "height" | "anisotropy" | "level";
+export type FogParamKey = "density" | "height" | "anisotropy" | "level" | "skyHaze";
 
 export type FogPocketKey = "x" | "y" | "z" | "radius" | "edge";
 
@@ -68,7 +72,9 @@ export type SurfaceFxParamKey =
   | "filmShift"
   | "rimStrength"
   | "microScale"
-  | "microRoughness";
+  | "microRoughness"
+  | "aoStrength"
+  | "aoEmphasis";
 
 export type GrowthParamKey =
   | "length"
@@ -110,6 +116,12 @@ export interface ExportOptions {
   readonly height: number;
   /** Samples to accumulate before capture - a fresh, converged run, not the live state. */
   readonly sampleCap: number;
+  /**
+   * Supersampling factor (1 = off): render the internal buffer this many times larger per
+   * axis, then box-downsample to the output size. Cheap crispness for fine fractal detail;
+   * clamped down at capture time so the internal buffer stays within the GPU texture limit.
+   */
+  readonly supersample: number;
   readonly denoise: boolean;
   readonly format: ExportFormat;
   /** JPEG quality in 0..1; ignored for PNG. */
@@ -165,6 +177,10 @@ export interface WorkstationState {
   ior: number;
   refraction: number;
   dispersion: number;
+  triplanarAmount: number;
+  triplanarScale: number;
+  cavityShift: number;
+  cavityRoughness: number;
   emissionStrength: number;
   /** User lights (1..MAX_LIGHTS); lights[0] is the traditional key light. */
   lights: LightSource[];
@@ -194,6 +210,7 @@ export interface WorkstationState {
   fogAnisotropy: number;
   fogShape: FogShape;
   fogLevel: number;
+  fogSkyHaze: number;
   fogPocketX: number;
   fogPocketY: number;
   fogPocketZ: number;
@@ -207,6 +224,8 @@ export interface WorkstationState {
   rimStrength: number;
   microNoiseScale: number;
   microNoiseRoughness: number;
+  aoStrength: number;
+  aoEmphasis: number;
   /** Surface growth (the look's one geometric effect; zero length is off). */
   growthLength: number;
   growthDensity: number;
@@ -358,6 +377,8 @@ export interface Controller {
   ) => Promise<ExportResult>;
   /** Abort an in-flight `exportImage` run; it resolves with `{ ok: false, cancelled: true }`. */
   cancelExport: () => void;
+  /** GPU max 2D texture dimension - the ceiling the export dialog's SSAA hint clamps against. */
+  readonly maxTextureDimension: number;
   /** Snapshot the live state as a new user item of `kind`. Selects it; never resets the render. */
   saveUserItem: (kind: LibraryKind, name: string, description: string) => LibraryActionResult;
   /** Overwrite a stored user item's params with the live state (keeps its identity). */

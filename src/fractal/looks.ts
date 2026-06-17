@@ -1,4 +1,4 @@
-import { defaultEffects } from "./effects-defaults";
+import { AO_DEFAULTS, defaultEffects } from "./effects-defaults";
 import { DEFAULT_SKY } from "./environments";
 import type { EffectsSettings, LightSource, Look, PaletteSettings } from "./types";
 
@@ -154,6 +154,8 @@ export const INNER_FIRE: Look = {
       rimStrength: 1.3,
       microScale: 12,
       microRoughness: 0,
+      aoStrength: AO_DEFAULTS.strength,
+      aoEmphasis: AO_DEFAULTS.emphasis,
     },
     growth: {
       length: 0.05,
@@ -345,6 +347,8 @@ export const EMBER_STORM: Look = {
       rimStrength: 1.1,
       microScale: 12,
       microRoughness: 0,
+      aoStrength: AO_DEFAULTS.strength,
+      aoEmphasis: AO_DEFAULTS.emphasis,
     },
   },
 };

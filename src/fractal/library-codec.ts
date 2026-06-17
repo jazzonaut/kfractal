@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AO_DEFAULTS } from "./effects-defaults";
 import { DEFAULT_SKY, ENVIRONMENTS } from "./environments";
 import { FORMULAS, getFormula } from "./registry";
 import { MAX_LIGHTS, MAX_PALETTE_STOPS } from "./types";
@@ -113,6 +114,11 @@ export const lookSchema = z.object({
     // via glassParams(), and clamped in place below only when present.
     refraction: finite.optional(),
     dispersion: finite.optional(),
+    // Spatial colour (added with #3); optional so pre-feature saves keep the fields absent.
+    triplanarAmount: finite.optional(),
+    triplanarScale: finite.optional(),
+    cavityShift: finite.optional(),
+    cavityRoughness: finite.optional(),
     emissionStrength: finite,
     emissionColor: hexColor,
   }),
@@ -148,6 +154,7 @@ export const lookSchema = z.object({
       pocketZ: finite.optional(),
       pocketRadius: finite.optional(),
       pocketEdge: finite.optional(),
+      skyHaze: finite.optional(),
     }),
     glow: z.object({ strength: finite, radius: finite, usePalette: z.boolean(), color: hexColor }),
     surface: z.object({
@@ -156,6 +163,9 @@ export const lookSchema = z.object({
       rimStrength: finite,
       microScale: finite,
       microRoughness: finite,
+      // Optional: looks saved before AO existed parse and get AO_DEFAULTS backfilled.
+      aoStrength: finite.optional(),
+      aoEmphasis: finite.optional(),
     }),
     growth: z.object({
       length: finite,
@@ -303,6 +313,16 @@ export function clampLookToEnvironments(look: Look): Look {
   // an absent field stays absent and pre-refraction curated looks pass through unaltered.
   if (material.refraction !== undefined) material.refraction = clamp(material.refraction, 0, 1);
   if (material.dispersion !== undefined) material.dispersion = clamp(material.dispersion, 0, 0.3);
+  if (material.triplanarAmount !== undefined) {
+    material.triplanarAmount = clamp(material.triplanarAmount, 0, 1);
+  }
+  if (material.triplanarScale !== undefined) {
+    material.triplanarScale = clamp(material.triplanarScale, 0.05, 12);
+  }
+  if (material.cavityShift !== undefined) material.cavityShift = clamp(material.cavityShift, -1, 1);
+  if (material.cavityRoughness !== undefined) {
+    material.cavityRoughness = clamp(material.cavityRoughness, -1, 1);
+  }
   const lens = {
     aperture: clamp(look.lens.aperture, 0, 0.14),
     chromaticAberration: clamp(look.lens.chromaticAberration, 0, 0.025),
@@ -322,6 +342,7 @@ export function clampLookToEnvironments(look: Look): Look {
   if (fog.pocketZ !== undefined) fog.pocketZ = clamp(fog.pocketZ, 0, 12);
   if (fog.pocketRadius !== undefined) fog.pocketRadius = clamp(fog.pocketRadius, 0.2, 10);
   if (fog.pocketEdge !== undefined) fog.pocketEdge = clamp(fog.pocketEdge, 0, 1);
+  if (fog.skyHaze !== undefined) fog.skyHaze = clamp(fog.skyHaze, 0, 1);
   const effects = {
     fog,
     glow: {
@@ -336,6 +357,8 @@ export function clampLookToEnvironments(look: Look): Look {
       rimStrength: clamp(fx.surface.rimStrength, 0, 2),
       microScale: clamp(fx.surface.microScale, 1, 60),
       microRoughness: clamp(fx.surface.microRoughness, 0, 1),
+      aoStrength: clamp(fx.surface.aoStrength ?? AO_DEFAULTS.strength, 0, 1),
+      aoEmphasis: clamp(fx.surface.aoEmphasis ?? AO_DEFAULTS.emphasis, 0, 1),
     },
     growth: {
       ...fx.growth,

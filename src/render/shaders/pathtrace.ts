@@ -60,7 +60,18 @@ const RENDER_DISPATCH = /* wgsl */ `  let tracing = mode > 0.5 && mode < 1.5;
       }
       return vec4<f32>(0.0);
     }
-    var alb = surfaceMaterial(h.trap, h.pos).albedo;
+    // Spatial colour feeds the denoiser's albedo guide too, so a triplanar/cavity edge stops
+    // the filter just like a palette edge. Normal/occlusion are only marched when those terms
+    // are live, so the plain-albedo pass keeps its original cost.
+    var n = vec3<f32>(0.0, 1.0, 0.0);
+    var occ = 1.0;
+    if (gColorP.x > 0.0 || gColorP.z != 0.0) {
+      n = calcNormal(h.pos, h.t);
+      if (gColorP.z != 0.0) {
+        occ = calcAO(h.pos, n);
+      }
+    }
+    var alb = surfaceMaterial(h.trap, h.pos, n, occ).albedo;
     if (gFogOn) {
       alb = mix(alb, gFogC.rgb, 1.0 - fogTransmittance(ro, rd, h.t));
     }
@@ -156,6 +167,7 @@ fn ${RENDER_SAMPLE_FN}(
   growthC: vec4<f32>,
   warpP: vec4<f32>,
   warpQ: vec4<f32>,
+  colorP: vec4<f32>,
   envTex: texture_2d<f32>,
   envTexSampler: sampler,
   blueNoiseTex: texture_2d<f32>,
@@ -254,6 +266,7 @@ fn ${RENDER_SAMPLE_FN}(
   gGrowthC = growthC;
   gWarpP = warpP;
   gWarpQ = warpQ;
+  gColorP = colorP;
   let warpAxes = i32(warpQ.w + 0.5);
   gWarpAxT = warpAxes % 3;
   gWarpAxB = (warpAxes / 3) % 3;
@@ -295,6 +308,9 @@ struct Hit {
   // plus the orbit trap at the ray's closest approach for palette tinting.
   glow: f32,
   glowTrap: f32,
+  // March step count at the hit (or escape): high counts mark grazing, intricate
+  // regions and drive the step-emphasis term of the art-directed AO.
+  steps: f32,
 };
 
 struct Material {
@@ -405,6 +421,9 @@ var<private> gWarpQ: vec4<f32>;
 var<private> gWarpAxT: i32;
 var<private> gWarpAxB: i32;
 var<private> gWarpAxR: i32;
+// Spatial coloring (ADR-0010 look-side): triplanar amount, triplanar scale, cavity colour
+// shift, cavity roughness shift. All 0 reproduces the single-trap-gradient image exactly.
+var<private> gColorP: vec4<f32>;
 // Twist/bend axis radii recorded by warpDomain, consumed by warpLipschitz: the
 // per-point factors must be measured at the exact intermediate points the warp visited.
 var<private> gWarpRT: f32;
@@ -572,7 +591,9 @@ fn march(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
   var glowAcc = 0.0;
   var glowTrap = 1.0;
   var glowNear = 1.0e9;
+  var steps = 0.0;
   for (var i = 0; i < gMaxSteps; i = i + 1) {
+    steps = steps + 1.0;
     pos = ro + rd * t;
     let d = de(pos);
     trap = d.y;
@@ -601,7 +622,7 @@ fn march(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
       break;
     }
   }
-  return Hit(t, hit, pos, trap, glowAcc, glowTrap);
+  return Hit(t, hit, pos, trap, glowAcc, glowTrap, steps);
 }
 
 // Rolled over the six signed axis probes (opaque bound): keeps this at ONE de()
@@ -683,19 +704,50 @@ fn gradient(tIn: f32) -> vec3<f32> {
   return mix(gStops[lo].rgb, gStops[hi].rgb, f);
 }
 
-fn surfaceMaterial(trap: f32, pos: vec3<f32>) -> Material {
-  let tt = trapTone(trap);
+// Triplanar value-noise tone in [0,1]: three axis-plane noise samples blended by the squared
+// normal. Drives spatial palette variation so colour reads across the structure, not just by
+// orbit-trap band. Fractal-space input so it sticks to the surface through a dive.
+fn triplanarTone(p: vec3<f32>, n: vec3<f32>) -> f32 {
+  let q = p * max(gColorP.y, 0.05);
+  var w = n * n;
+  w = w / max(w.x + w.y + w.z, 1.0e-4);
+  let ax = valueNoise(vec3<f32>(q.y, q.z, 0.37));
+  let ay = valueNoise(vec3<f32>(q.z, q.x, 0.61));
+  let az = valueNoise(vec3<f32>(q.x, q.y, 0.91));
+  return ax * w.x + ay * w.y + az * w.z;
+}
+
+// occ: ambient occlusion at this surface point (1 = open, ->0 = deep crevice), supplied by the
+// caller so the cavity terms reuse the AO march instead of paying for a second one.
+fn surfaceMaterial(trap: f32, pos: vec3<f32>, n: vec3<f32>, occ: f32) -> Material {
+  let tt0 = trapTone(trap);
+  var tt = tt0;
+  // Triplanar spatial colour: perturb the palette coordinate by a position-driven tone so hue
+  // varies across the surface. Additive around the trap value, keeping the orbit-trap structure.
+  if (gColorP.x > 0.0) {
+    tt = clamp(tt + gColorP.x * (triplanarTone(toFractalSpace(pos), n) - 0.5), 0.0, 1.0);
+  }
+  // Cavity colour split: occluded recesses sample a shifted palette position from open ridges.
+  if (gColorP.z != 0.0) {
+    tt = clamp(tt + gColorP.z * (1.0 - occ), 0.0, 1.0);
+  }
   var albedo = gradient(tt);
   var rough = gMatP.x;
   if (gNoiseOn) {
     // Micro detail sticks to the surface (fractal space) and is applied at every path
     // vertex, so secondary bounces see the same material the camera does.
-    let n = microNoise(toFractalSpace(pos));
-    rough = clamp(rough + gFxB.x * n, 0.02, 1.0);
-    albedo = albedo * clamp(1.0 + gFxB.y * n, 0.0, 2.0);
+    let nz = microNoise(toFractalSpace(pos));
+    rough = clamp(rough + gFxB.x * nz, 0.02, 1.0);
+    albedo = albedo * clamp(1.0 + gFxB.y * nz, 0.0, 2.0);
   }
-  // Emission glows out of the deep/crevice end of the trap range.
-  let glow = pow(clamp(1.0 - tt, 0.0, 1.0), 3.0);
+  // Cavity material split: occlusion nudges roughness (matte recesses / glossy ridges, or the
+  // reverse for a negative shift).
+  if (gColorP.w != 0.0) {
+    rough = clamp(rough + gColorP.w * (1.0 - occ), 0.02, 1.0);
+  }
+  // Emission glows out of the deep/crevice end of the trap range (unshifted tone, so spatial
+  // colour never moves the glow).
+  let glow = pow(clamp(1.0 - tt0, 0.0, 1.0), 3.0);
   var emission = gEmission.rgb * (gEmission.w * glow);
   if (gGrowthOn) {
     // The undisplaced base distance separates growth from base: ~hitEps on the base
@@ -1029,6 +1081,25 @@ fn calcAO(p: vec3<f32>, n: vec3<f32>) -> f32 {
     sca = sca * 0.7;
   }
   return clamp(1.0 - 1.5 * occ, 0.0, 1.0);
+}
+
+// Art-directed ambient occlusion (gFxB.z cavity strength, gFxB.w step emphasis).
+// Both 0 -> returns 1.0, so the image is bit-for-bit the pre-AO render. This is the
+// "crisp" Mandelbulb3D look: deliberately biased darkening that etches crevices and
+// fine silhouette detail harder than physical GI alone resolves them.
+//  - cavity: distance-field occlusion (calcAO), blended in by gFxB.z.
+//  - emphasis: pixels whose ray crawled through many DE steps sit in grazing, lacy
+//    regions; pow(1 - steps/maxSteps) darkens them, blended in by gFxB.w.
+fn stylizedAO(cavity: f32, steps: f32) -> f32 {
+  var ao = 1.0;
+  if (gFxB.z > 0.0) {
+    ao = ao * mix(1.0, cavity, gFxB.z);
+  }
+  if (gFxB.w > 0.0) {
+    let frac = clamp(steps / max(f32(gMaxSteps), 1.0), 0.0, 1.0);
+    ao = ao * mix(1.0, pow(1.0 - frac, 1.5), gFxB.w);
+  }
+  return ao;
 }
 
 // ---- Special effects --------------------------------------------------------------
@@ -1519,6 +1590,15 @@ fn pathTrace(
       if (gFogC.w > 0.0 && b < 2) {
         radiance = radiance + clampIndirect(throughput * fogInScatter(o, d, segLen), b);
       }
+      // Aerial perspective (gFogPocketP.z): the primary surface fades toward the sky
+      // behind it as fog accrues over distance - structure dissolving into luminous sky.
+      // Gated to surface hits (a miss already shows the sky, so adding it there would
+      // double the background) and to the primary segment, where depth reads.
+      if (gFogPocketP.z > 0.0 && b == 0 && h.hit > 0.5) {
+        let aerial = 1.0 - fogTransmittance(o, d, segLen);
+        let skyCol = skyRadiance(d, false, envTex, envTexSampler);
+        radiance = radiance + clampIndirect(throughput * skyCol * (gFogPocketP.z * aerial), b);
+      }
       // Attenuate BEFORE this vertex's emission/sky/NEE adds, so everything beyond
       // the segment is correctly absorbed - including the env-MIS miss term below.
       throughput = throughput * fogTransmittance(o, d, segLen);
@@ -1533,8 +1613,27 @@ fn pathTrace(
       break;
     }
     let n = calcNormal(h.pos, h.t);
-    let m = surfaceMaterial(h.trap, h.pos);
+    // Occlusion for the primary surface, shared by the cavity colour/roughness split and the
+    // art-directed AO. One AO march, only when something consumes it, and only at b==0 (deeper
+    // bounces pass occ=1 so their albedo stays neutral and they skip the cost).
+    // occ is consumed by the cavity terms (gColorP.z/.w) and the AO cavity strength (gFxB.z).
+    // The AO edge-emphasis (gFxB.w) reads h.steps, NOT occ, so it is deliberately absent here:
+    // marching calcAO for emphasis-only would discard the result.
+    var occ = 1.0;
+    if (b == 0 && (gFxB.z > 0.0 || gColorP.z != 0.0 || gColorP.w != 0.0)) {
+      occ = calcAO(h.pos, n);
+    }
+    let m = surfaceMaterial(h.trap, h.pos, n, occ);
+    // Emission is self-emitted light: add it with the UN-occluded throughput so crevice glow
+    // (which peaks exactly where AO darkens) is not cancelled by the AO term.
     radiance = radiance + clampIndirect(throughput * m.emission, b);
+    // Art-directed AO on the primary surface only: one factor folded into throughput so the
+    // rim, NEE direct light, env light and all onward indirect inherit the crevice darkening.
+    // Biased on purpose; b==0 keeps it to one AO march per path and out of the deeper bounces
+    // where it would only add cost and noise.
+    if (b == 0 && (gFxB.z > 0.0 || gFxB.w > 0.0)) {
+      throughput = throughput * stylizedAO(occ, h.steps);
+    }
     if (b == 0) {
       radiance = radiance + throughput * rimTerm(n, -d);
     }
@@ -1726,8 +1825,8 @@ fn previewShade(
     return sky + glowAdd;
   }
   let n = calcNormal(h.pos, h.t);
-  let m = surfaceMaterial(h.trap, h.pos);
   let ao = calcAO(h.pos, n);
+  let m = surfaceMaterial(h.trap, h.pos, n, ao);
   let shadowOrigin = h.pos + n * (hitEps(h.t) * 3.0);
 
   var direct = vec3<f32>(0.0);
@@ -1769,9 +1868,21 @@ fn previewShade(
   }
 
   let indirect = m.albedo * (envAmbient * ao + bounce);
-  var col = m.emission + rimTerm(n, -rd) + direct + envDirect + indirect;
+  // Art-directed AO, reusing the cavity factor already marched above (no-op when both strengths
+  // are 0). This APPROXIMATES the converged render, not matches it: envAmbient already carries an
+  // "ao" stand-in for the path tracer's emergent indirect occlusion, and stylizedAO layers on
+  // top, so preview reads somewhat darker in crevices than the converged image (preview is a
+  // stand-in by design). Emission is added AFTER the multiply so self-emitted crevice glow is
+  // not occluded, matching pathTrace.
+  let lit = rimTerm(n, -rd) + direct + envDirect + indirect;
+  var col = m.emission + lit * stylizedAO(ao, h.steps);
   if (gFogOn) {
-    col = col * fogTransmittance(ro, rd, h.t) + fogInScatterPreview(ro, rd, h.t);
+    let trans = fogTransmittance(ro, rd, h.t);
+    col = col * trans + fogInScatterPreview(ro, rd, h.t);
+    // Aerial perspective, matching the path tracer (no-op when sky-haze is 0).
+    if (gFogPocketP.z > 0.0) {
+      col = col + skyRadiance(rd, false, envTex, envTexSampler) * (gFogPocketP.z * (1.0 - trans));
+    }
   }
   return col + glowAdd;
 }

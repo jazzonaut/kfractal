@@ -17,6 +17,7 @@ import {
   EXPORT_SAMPLE_CAP_CHOICES,
   RESOLUTION_PRESETS,
 } from "../../config/constants";
+import { effectiveSupersample } from "../../render/supersample";
 import { useController } from "../composables/use-controller";
 import type { ExportFormat } from "../controller";
 
@@ -32,7 +33,14 @@ const portrait = ref(false);
 const customWidth = ref(1920);
 const customHeight = ref(1080);
 const sampleCap = ref(DEFAULT_EXPORT_SAMPLE_CAP);
+const supersample = ref(1);
 const denoise = ref(true);
+
+const SSAA_OPTIONS = [
+  { label: "Off", value: 1 },
+  { label: "2×", value: 2 },
+  { label: "4×", value: 4 },
+];
 const format = ref<ExportFormat>("png");
 const quality = ref(DEFAULT_JPEG_QUALITY);
 const filename = ref("kfractal");
@@ -84,6 +92,14 @@ const megapixels = computed(() => {
   return ((width * height) / 1_000_000).toFixed(1);
 });
 
+// Effective supersampling once clamped to the live GPU texture limit, computed through the same
+// helper the engine uses so the "renders at …" hint can never disagree with the real export.
+const internalDims = computed(() => {
+  const { width, height } = finalDims.value;
+  const ss = effectiveSupersample(width, height, supersample.value, controller.maxTextureDimension);
+  return { ss, width: width * ss, height: height * ss };
+});
+
 const valid = computed(() => finalDims.value.width >= 16 && finalDims.value.height >= 16);
 
 // Re-seed mutable defaults each open: filename from the active item, denoise from the live view.
@@ -114,6 +130,7 @@ async function runExport(): Promise<void> {
       width,
       height,
       sampleCap: sampleCap.value,
+      supersample: supersample.value,
       denoise: denoise.value,
       format: format.value,
       quality: quality.value,
@@ -219,6 +236,27 @@ function onCancel(): void {
           size="small"
           data-testid="export-samples-select"
         />
+      </label>
+
+      <label class="flex flex-col gap-1 text-xs text-muted-color">
+        Anti-aliasing (SSAA)
+        <SelectButton
+          v-model="supersample"
+          :options="SSAA_OPTIONS"
+          option-label="label"
+          option-value="value"
+          :allow-empty="false"
+          :disabled="exporting"
+          size="small"
+          data-testid="export-ssaa-select"
+        />
+        <span v-if="internalDims.ss > 1 || internalDims.ss < supersample" class="text-muted-color/70">
+          <template v-if="internalDims.ss > 1">Renders at {{ internalDims.width }}×{{ internalDims.height }}</template>
+          <template v-if="internalDims.ss < supersample">
+            <template v-if="internalDims.ss > 1">(reduced to {{ internalDims.ss }}× by GPU limit)</template>
+            <template v-else>SSAA off at this resolution — exceeds the GPU texture limit</template>
+          </template>
+        </span>
       </label>
 
       <label class="flex cursor-pointer items-center justify-between text-xs text-muted-color">

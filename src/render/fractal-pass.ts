@@ -93,6 +93,8 @@ export interface SampleUniforms {
   readonly matP: any;
   /** refraction, dispersion, spare, spare. */
   readonly matQ: any;
+  /** Spatial colour: triplanar amount, triplanar scale, cavity colour shift, cavity roughness shift. */
+  readonly colorP: any;
   /** emission rgb (linear), strength. */
   readonly emissionP: any;
   /** trap scale, trap power. */
@@ -129,14 +131,14 @@ export interface SampleUniforms {
   /** Pocket fog centre, resolved to the march frame each frame from the camera-frame
    * offset; radius in w. */
   readonly fogPocketC: any;
-  /** Pocket fog: mode (0 layer / 1 pocket) in x, edge softness in y. */
+  /** Pocket fog: mode (0 layer / 1 pocket) in x, edge softness in y, sky-haze (aerial perspective) in z. */
   readonly fogPocketP: any;
   /** Glow: strength, proximity radius, palette-tint flag (0/1), falloff exponent. */
   readonly glowP: any;
   readonly glowColor: any;
   /** Surface fx: iridescence, film thickness 0..1, rim strength, micro-noise frequency. */
   readonly fxA: any;
-  /** Surface fx: micro-noise roughness amount, micro-noise albedo amount, spares. */
+  /** Surface fx: micro-noise roughness amount, micro-noise albedo amount, AO strength, AO emphasis. */
   readonly fxB: any;
   /** Growth: protrusion length (0 = off), density, sharpness, coverage. */
   readonly growthP: any;
@@ -224,6 +226,9 @@ export class FractalPass {
       // refraction, dispersion, spare, spare. Defaults to 0 (no glass lobe) so the
       // pre-refraction image is reproduced exactly.
       matQ: uniform(new THREE.Vector4(0, 0, 0, 0)),
+      // Spatial colour: amount 0 (off) reproduces the single-trap gradient; scale 1.5 is a
+      // sensible default frequency for when the amount is dialed up.
+      colorP: uniform(new THREE.Vector4(0, 1.5, 0, 0)),
       emissionP: uniform(new THREE.Vector4(0, 0, 0, 0)),
       trapMap: uniform(new THREE.Vector2(1, 0.35)),
       // Default 3-stop ramp (matches the pre-multi-stop colA/colB/colC); applyLook overwrites it.
@@ -347,6 +352,7 @@ export class FractalPass {
       growthC: u.growthC,
       warpP: u.warpP,
       warpQ: u.warpQ,
+      colorP: u.colorP,
       envTex: this.envTexNode,
       envTexSampler: sampler(this.envTexNode),
       blueNoiseTex: this.blueNoiseTexNode,
@@ -436,6 +442,12 @@ export class FractalPass {
     u.matP.value.set(m.roughness, m.specular, m.translucency, m.ior);
     const glass = glassParams(m);
     u.matQ.value.set(glass.refraction, glass.dispersion, 0, 0);
+    u.colorP.value.set(
+      m.triplanarAmount ?? 0,
+      m.triplanarScale ?? 1.5,
+      m.cavityShift ?? 0,
+      m.cavityRoughness ?? 0,
+    );
     const e = linearColor(m.emissionColor);
     u.emissionP.value.set(e.x, e.y, e.z, m.emissionStrength);
 
@@ -511,7 +523,7 @@ export class FractalPass {
     u.fogPocketP.value.set(
       shape === "pocket" ? 1 : 0,
       fx.fog.pocketEdge ?? FOG_DEFAULTS.pocketEdge,
-      0,
+      fx.fog.skyHaze ?? FOG_DEFAULTS.skyHaze,
       0,
     );
     this.recomputeFogPocketCenter();
@@ -520,7 +532,8 @@ export class FractalPass {
     const s = fx.surface;
     u.fxA.value.set(s.iridescence, s.filmShift, s.rimStrength, s.microScale);
     // Albedo mottling rides the roughness amount at half strength; one slider, one look.
-    u.fxB.value.set(s.microRoughness, s.microRoughness * 0.5, 0, 0);
+    // z/w carry the art-directed AO: cavity strength + step-count edge emphasis.
+    u.fxB.value.set(s.microRoughness, s.microRoughness * 0.5, s.aoStrength, s.aoEmphasis);
     const g = fx.growth;
     // Displacement raises the field's Lipschitz constant by ~length * density * slope;
     // the march multiplies in-shell distances by this to compensate (floor caps the

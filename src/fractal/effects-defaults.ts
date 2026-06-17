@@ -14,6 +14,7 @@ export const FOG_DEFAULTS: {
   pocketZ: number;
   pocketRadius: number;
   pocketEdge: number;
+  skyHaze: number;
 } = {
   shape: "layer",
   level: 0,
@@ -22,6 +23,20 @@ export const FOG_DEFAULTS: {
   pocketZ: 5,
   pocketRadius: 3,
   pocketEdge: 0.5,
+  // Opt-in (0), like the other effect strengths: a non-zero default silently re-hazed the
+  // curated fog looks (EMBER_STORM et al.). Distinct from AO, which is deliberately on by
+  // default — aerial haze only acts under fog and is more situational, so it stays off.
+  skyHaze: 0,
+};
+
+/**
+ * Default art-directed AO. Unlike the other effects (which default off), a tasteful
+ * amount ships on: crevice crispness is the baseline "level-up" and reads on every
+ * shape. Also the single source used to backfill looks saved before AO existed.
+ */
+export const AO_DEFAULTS: { strength: number; emphasis: number } = {
+  strength: 0.65,
+  emphasis: 0.3,
 };
 
 /**
@@ -33,7 +48,15 @@ export function defaultEffects(): EffectsSettings {
   return {
     fog: { density: 0, height: 1.5, anisotropy: 0.4, color: "#a8c4e0", ...FOG_DEFAULTS },
     glow: { strength: 0, radius: 0.25, usePalette: true, color: "#ffd9a0" },
-    surface: { iridescence: 0, filmShift: 0.3, rimStrength: 0, microScale: 12, microRoughness: 0 },
+    surface: {
+      iridescence: 0,
+      filmShift: 0.3,
+      rimStrength: 0,
+      microScale: 12,
+      microRoughness: 0,
+      aoStrength: AO_DEFAULTS.strength,
+      aoEmphasis: AO_DEFAULTS.emphasis,
+    },
     growth: {
       length: 0,
       density: 80,
