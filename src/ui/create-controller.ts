@@ -1,4 +1,4 @@
-import { AUTO_QUALITY_KEY, CONTROL_SENSITIVITY_KEY } from "../config/constants";
+import { AUTO_QUALITY_KEY, CONTROL_SENSITIVITY_KEY, LIVE_RENDER_KEY } from "../config/constants";
 import { downloadTextFile } from "../core/download";
 import {
   buildLibraryFile,
@@ -188,6 +188,19 @@ export function createController(deps: {
       engine.setAutoQuality(value);
       try {
         localStorage.setItem(AUTO_QUALITY_KEY, String(value));
+      } catch {
+        // Private-mode / quota failures are non-fatal: the live setting still applies this
+        // session, it just won't survive a reload.
+      }
+    },
+    setLiveRender: (value: boolean) => {
+      // A live-preview style pref: the engine swaps the live view between the cheap analytic
+      // preview and the downsampled progressive path-trace. Render/export are unaffected.
+      // Remember the choice across reloads.
+      state.liveRender = value;
+      engine.setLiveRender(value);
+      try {
+        localStorage.setItem(LIVE_RENDER_KEY, String(value));
       } catch {
         // Private-mode / quota failures are non-fatal: the live setting still applies this
         // session, it just won't survive a reload.

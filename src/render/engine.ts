@@ -1,5 +1,5 @@
 import * as THREE from "three/webgpu";
-import { FPS_INTERVAL } from "../config/constants";
+import { FPS_INTERVAL, LIVE_RENDER_SAMPLE_CAP } from "../config/constants";
 import { startLoop } from "../core/loop";
 import { warpStepBoost } from "../fractal/warp";
 import { CHAIN_PREVIEW_ITERS, chainStepScale } from "../fractal/chain";
@@ -96,6 +96,18 @@ export class RenderEngine {
   // True when the previous frame actually re-marched the preview (so its frame time is a real
   // load signal). Cleared on idle/converged/rendering frames, which the gated loop makes free.
   private lastPreviewMarch = false;
+  // Live render (low-res progressive preview, opt-in). When on, the live view keeps the cheap
+  // analytic preview WHILE the camera moves, then accumulates a downsampled path-trace once the
+  // view settles - real lighting/colour at the auto-quality scale, never touching state.rendering
+  // (the explicit Render/Export stay native). `liveRenderSample` is its own accumulation counter,
+  // independent of the explicit render's `sampleIndexValue`; it resets to 0 on every scene change.
+  private liveRender = false;
+  private liveRenderSample = 0;
+  // True for the frames in which the view is being actively manipulated (camera gesture or dive
+  // step), as opposed to a settings edit. In live-render mode it routes the cheap analytic
+  // preview to camera motion only: a settings change skips the analytic frame and refines the
+  // path-trace in place, so the image never flashes the (differently-shaded) preview look.
+  private viewChanging = false;
 
   // Accumulation state, owned by the loop (ADR-0003, amended: render is explicit).
   private sampleIndexValue = 0;
@@ -227,9 +239,22 @@ export class RenderEngine {
     this.syncRenderScale();
   }
 
+  // Enable/disable the live render (low-res progressive preview). Flagging dirty forces the next
+  // frame to redraw the analytic preview, from which the loop either re-settles into a fresh
+  // live-render accumulation (enabled) or simply holds the clean preview (disabled). No effect
+  // while an explicit render/export owns the loop. The controller persists the choice.
+  setLiveRender(enabled: boolean): void {
+    this.liveRender = enabled;
+    this.liveRenderSample = 0;
+    if (!this.state.rendering) this.sceneDirty = true;
+  }
+
   // Any change drops back to the live preview and discards the render in progress.
   resetAccumulation(): void {
     this.sampleIndexValue = 0;
+    // A scene change invalidates any in-flight live-render accumulation: restart it from 0 so
+    // the settled view re-marches the path-trace rather than blending onto a stale mean.
+    this.liveRenderSample = 0;
     this.state.sampleCount = 0;
     this.state.rendering = false;
     // Cancels an in-flight startRender compile: its post-await guard sees this and stays preview.
@@ -514,7 +539,8 @@ export class RenderEngine {
     const shape = this.activeShape;
     this.fpsElapsed += dt;
     this.fpsFrames += 1;
-    if (this.controls.consumeChanged()) this.resetAccumulation();
+    const cameraChanged = this.controls.consumeChanged();
+    if (cameraChanged) this.resetAccumulation();
     // Dive bookkeeping (infinite zoom): steer the orbit pivot onto the surface, re-base
     // the world scale when the camera leaves the orbit band, and re-anchor through the
     // Apollonian's own self-similarity map. Every change is view-preserving, but the
@@ -528,11 +554,17 @@ export class RenderEngine {
       this.dive.chain && !this.state.rendering
         ? Math.min(this.state.iterations, CHAIN_PREVIEW_ITERS)
         : this.state.iterations;
-    if (
-      this.dive.update(this.stage, shape.formula, this.fractal.uniforms.formulaP.value, baseIters)
-    ) {
-      this.resetAccumulation();
-    }
+    const diveChanged = this.dive.update(
+      this.stage,
+      shape.formula,
+      this.fractal.uniforms.formulaP.value,
+      baseIters,
+    );
+    if (diveChanged) this.resetAccumulation();
+    // A camera gesture or dive step is active view manipulation; a settings edit is not. The
+    // live-render branch uses this to decide between the snappy analytic preview and refining
+    // the path-trace in place (see render()).
+    this.viewChanging = cameraChanged || diveChanged;
     this.fractal.syncDive(this.dive.offset, this.dive.basis, this.dive.scale);
     this.fractal.uniforms.iterations.value =
       baseIters + this.dive.extraIterations(this.stage.distance);
@@ -568,18 +600,58 @@ export class RenderEngine {
     }
   }
 
+  // Present an accumulated mean (the path-traced buffer) through the denoise + post chain. Shared
+  // by the explicit render and the live render. `sampleCount` is the count the running mean holds
+  // (drives both the denoiser's converge-fade and its re-filter cache key); re-filters only when
+  // that count advanced, otherwise re-grades the cached denoised texture. With denoise off it
+  // presents the raw accumulation. Does not touch `state.sampleCount` (explicit-render only).
+  private presentMean(sampleCount: number): void {
+    let tex: THREE.Texture;
+    if (this.state.denoise) {
+      if (this.denoiseCacheSample !== sampleCount) {
+        this.denoiseCacheTex = this.denoiser.run(
+          this.renderer,
+          this.accumulation.texture,
+          sampleCount,
+        );
+        this.denoiseCacheSample = sampleCount;
+      }
+      tex = this.denoiseCacheTex!;
+    } else {
+      tex = this.accumulation.texture;
+      this.denoiseCacheSample = -1;
+    }
+    this.post.setSource(tex);
+    this.post.render();
+    this.presentDirty = false;
+  }
+
+  // First real pixels are up: retire the boot loading screen (once). Called from whichever live
+  // path presents first - the analytic preview, or the live render when it owns the first frame.
+  private markFirstFrame(): void {
+    if (this.firstFramePresented) return;
+    this.firstFramePresented = true;
+    this.onFirstFrame();
+  }
+
   private render(): void {
     if (this.fatalError) return;
-    // Only an actual preview re-march below flips this back on; idle, present-only, and
-    // path-trace frames leave it false so auto-quality samples real preview load alone.
+    // A frame whose cost auto-quality should weigh flips this back on below: the analytic
+    // preview march (plain preview) or a live-render path-trace sample. Idle, present-only, and
+    // explicit-render frames leave it false (rendering forces native, so auto-quality is off).
     this.lastPreviewMarch = false;
     try {
       if (!this.state.rendering) {
-        // Preview: one sharp analytic sample, shown directly (blend factor 1).
-        // Skipped entirely while nothing changed - the canvas holds the last frame,
-        // so an idle workstation costs zero GPU. Animated grain alone keeps the
-        // cheap post pass ticking.
-        if (this.sceneDirty) {
+        // Analytic preview: one sharp analytic sample, shown directly (blend factor 1). Skipped
+        // while nothing changed - the canvas holds the last frame, so an idle workstation costs
+        // zero GPU. It runs for: plain preview (always, on any change); live-render mode ONLY
+        // while the view is being actively manipulated (a camera gesture / dive step); and the
+        // very first frame (a fast preview retires the boot loader before the heavier path-trace
+        // pipeline compiles). A live-render SETTINGS edit deliberately does NOT run it - it falls
+        // through to the live block, which refines the path-trace in place so the image never
+        // flashes the differently-shaded preview look between the old and new render.
+        const wantAnalytic = !this.liveRender || this.viewChanging || !this.firstFramePresented;
+        if (this.sceneDirty && wantAnalytic) {
           // Track the live camera while interacting.
           this.fractal.syncCamera(this.stage.camera);
           this.fractal.setMode(MODE_PREVIEW);
@@ -591,14 +663,69 @@ export class RenderEngine {
           this.presentDirty = false;
           this.post.render();
           this.sampleIndexValue = 0;
-          // A real preview march ran: its frame time is a load signal for auto-quality.
-          this.lastPreviewMarch = true;
-          // First real pixels are up: retire the boot loading screen.
-          if (!this.firstFramePresented) {
-            this.firstFramePresented = true;
-            this.onFirstFrame();
+          // Settling restarts the live render from sample 0; the analytic frame it would blend
+          // onto is discarded by the first path-trace sample's blend-factor-1 overwrite.
+          this.liveRenderSample = 0;
+          // Auto-quality should measure the heavy path-trace samples in live-render mode, not
+          // these cheap analytic frames (feeding both would pump the tier between drag and
+          // settle). In plain preview the analytic frame IS the load signal, so it still feeds.
+          this.lastPreviewMarch = !this.liveRender;
+          this.markFirstFrame();
+          return;
+        }
+        // Live render: accumulate the real path-traced lighting at the (auto-quality) preview
+        // scale up to a low cap, then idle. Entered both on a settled view (climb to the cap)
+        // and on a settings edit (sceneDirty true here means the analytic frame was deliberately
+        // skipped above). Mirrors the explicit render loop below but on its own counter and
+        // without flipping state.rendering (the explicit Render/Export stay native + full-cap).
+        const liveCap = Math.min(this.state.sampleCap, LIVE_RENDER_SAMPLE_CAP);
+        if (this.liveRender && (this.sceneDirty || this.liveRenderSample < liveCap)) {
+          // A run starts fresh when the scene was just dirtied (a settings edit, analytic skipped)
+          // or the counter sits at 0 (the analytic preview just settled). Capture the denoiser
+          // feature buffers once, then choose how the accumulation begins:
+          if (this.sceneDirty || this.liveRenderSample === 0) {
+            // sceneDirty here ⇒ a settings edit (the analytic frame was skipped); !sceneDirty with
+            // a zeroed counter ⇒ the analytic preview just settled (only that path clears dirty
+            // and leaves the counter at 0). They want opposite starts:
+            //   - settled after orbit/zoom: KEEP the preview already sitting in the accumulation
+            //     buffer as sample 0 and start MC sampling at index 1, so the path-trace blends in
+            //     over the first samples (blend 1/2, 1/3, …) - a real cross-dissolve from the
+            //     preview into the render rather than a hard cut between two different looks.
+            //   - a settings edit: overwrite from sample 0, so a value reads crisply each frame
+            //     while a slider is dragged (seeding would smear consecutive edits into a trail).
+            const dissolveFromPreview = !this.sceneDirty;
+            this.sceneDirty = false;
+            // Pin the camera and capture the denoiser's primary-hit feature buffers once per run.
+            this.fractal.syncCamera(this.stage.camera);
+            this.fractal.setMode(MODE_FEATURE_ND);
+            this.fractal.renderTo(this.renderer, this.denoiser.featureND);
+            this.fractal.setMode(MODE_FEATURE_ALBEDO);
+            this.fractal.renderTo(this.renderer, this.denoiser.featureAlbedo);
+            // Fresh mean: drop any denoise cache from a previous run so it re-filters from the top.
+            this.denoiseCacheSample = -1;
+            // Index 1 keeps the buffered preview as the implicit sample 0 (it fades to ~1/liveCap
+            // by convergence - imperceptible); index 0 discards it (blend factor 1 overwrites).
+            this.liveRenderSample = dissolveFromPreview ? 1 : 0;
           }
-        } else if (this.presentDirty || this.post.grainStrength.value > 0) {
+          this.fractal.setMode(MODE_PATHTRACE);
+          this.fractal.setFrame(this.liveRenderSample);
+          this.fractal.renderTo(this.renderer, this.sampleRT);
+          this.accumulation.accumulate(this.renderer, this.liveRenderSample);
+          this.liveRenderSample += 1;
+          // Present early samples eagerly so the lighting visibly builds, then throttle: at the
+          // low live cap the denoise + bloom chain can rival a sample's own cost.
+          const presentEvery = this.liveRenderSample < 8 ? 1 : 4;
+          if (this.liveRenderSample >= liveCap || this.liveRenderSample % presentEvery === 0) {
+            this.presentMean(this.liveRenderSample);
+            this.markFirstFrame();
+          }
+          // These ARE the frames whose cost auto-quality should track.
+          this.lastPreviewMarch = true;
+          return;
+        }
+        // Idle / converged: re-grade the current source only when the post side changed or
+        // animated grain needs a fresh seed (no re-march, no re-denoise - the mean is unchanged).
+        if (this.presentDirty || this.post.grainStrength.value > 0) {
           this.presentDirty = false;
           this.post.render();
         }
@@ -607,29 +734,10 @@ export class RenderEngine {
 
       // Rendering (explicit action): accumulate path-traced samples up to the cap.
       const present = (): void => {
-        let tex: THREE.Texture;
-        if (this.state.denoise) {
-          // Re-filter only when the mean advanced (or denoise was just re-enabled, which
-          // resets the key to -1 below); otherwise reuse the cached denoised texture so a
-          // converged frame doesn't re-run 4 à-trous passes per vsync for animated grain.
-          if (this.denoiseCacheSample !== this.sampleIndexValue) {
-            this.denoiseCacheTex = this.denoiser.run(
-              this.renderer,
-              this.accumulation.texture,
-              this.sampleIndexValue,
-            );
-            this.denoiseCacheSample = this.sampleIndexValue;
-          }
-          tex = this.denoiseCacheTex!;
-        } else {
-          tex = this.accumulation.texture;
-          this.denoiseCacheSample = -1;
-        }
-        this.post.setSource(tex);
-        this.post.render();
-        this.presentDirty = false;
-        // The samples readout follows the present cadence rather than the frame
-        // rate, so this reactive write stops re-rendering the status bar at 60+ Hz.
+        // Denoise (when on, re-filtering only when the mean advanced) + post, via the shared
+        // helper. The samples readout follows the present cadence rather than the frame rate,
+        // so this reactive write stops re-rendering the status bar at 60+ Hz.
+        this.presentMean(this.sampleIndexValue);
         this.state.sampleCount = this.sampleIndexValue;
       };
 

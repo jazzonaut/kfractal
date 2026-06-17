@@ -64,6 +64,23 @@ const showFullscreen = computed(() => fullscreenSupported.value && isTouch.value
       />
     </label>
     <label
+      v-tooltip.top="
+        'Show the real path-traced lighting and colour in the live view (a downsampled render that settles once the camera stops) instead of the fast preview. Keep Auto quality on so it stays low-res. The full Render and Export are unaffected.'
+      "
+      :class="
+        stacked
+          ? 'flex cursor-pointer items-center justify-between gap-2 text-muted-color'
+          : 'flex cursor-pointer items-center gap-2 text-muted-color'
+      "
+    >
+      Live render
+      <ToggleSwitch
+        :model-value="state.liveRender"
+        data-testid="live-render-toggle"
+        @update:model-value="controller.setLiveRender($event)"
+      />
+    </label>
+    <label
       :class="
         stacked
           ? 'flex cursor-pointer items-center justify-between gap-2 text-muted-color'

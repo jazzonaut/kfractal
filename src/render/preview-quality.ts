@@ -141,7 +141,12 @@ export function initialPreviewScale(): number {
   return 1;
 }
 
-/** Whether auto-quality defaults ON (touch devices) when there is no stored preference. */
+/**
+ * Whether auto-quality defaults ON when there is no stored preference. On for everyone now: a
+ * fresh visitor (any device) gets the smooth, adaptive preview out of the box, and the toggle
+ * lets a desktop user with headroom opt back into pinned-native. The bias inside PreviewQuality
+ * still favors sharpness, so a capable machine settles at or near native regardless.
+ */
 export function autoQualityDefault(): boolean {
-  return isCoarsePointer();
+  return true;
 }

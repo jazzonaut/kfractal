@@ -191,6 +191,8 @@ async function main(): Promise<void> {
   // this picks the initial render scale before the first heavy frames, so a weak device
   // doesn't jank on boot before the runtime loop adapts.
   engine.setAutoQuality(state.autoQuality);
+  // Seed the live render (low-res progressive preview) from the persisted choice; off by default.
+  engine.setLiveRender(state.liveRender);
   mountUi(controller);
 
   // Begin driving frames and listening for window resizes (ADR-0003).

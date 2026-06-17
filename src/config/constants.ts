@@ -32,10 +32,28 @@ export const CONTROL_SENSITIVITY_KEY = "kf.controls.sensitivity";
  * Live preview auto-quality (dynamic resolution scaling): the persisted on/off preference.
  * When on, the engine lowers the live preview's internal render resolution on devices that
  * can't sustain a smooth frame rate, and restores it as headroom returns. The progressive
- * render and still export are unaffected (always native resolution). Defaults on for touch
- * devices, off on desktop, when no choice is stored.
+ * render and still export are unaffected (always native resolution). Defaults on (every device)
+ * when no choice is stored; the sharpness-biased controller settles capable machines near native.
  */
 export const AUTO_QUALITY_KEY = "kf.preview.autoQuality";
+
+/**
+ * Live render (low-res progressive preview): the persisted on/off preference. When on, the live
+ * view shows the real path-traced lighting/colour instead of the cheap analytic preview — the
+ * fast preview is kept while the camera is moving, then a downsampled progressive render
+ * accumulates once the view settles. The downsampling is auto-quality's job (it runs at the
+ * live preview render scale), so this resembles, but is lighter than, the full Render/Export
+ * (which stay native). Defaults off when no choice is stored.
+ */
+export const LIVE_RENDER_KEY = "kf.preview.liveRender";
+
+/**
+ * Sample cap for the live render's progressive accumulation. Lower than the full Render cap:
+ * a downsampled, denoised preview is visually settled well before the export-grade sample
+ * counts, and a low cap keeps it responsive (it idles once reached, then re-accumulates on the
+ * next change). Capped further by the user's Samples choice, so it never overshoots it.
+ */
+export const LIVE_RENDER_SAMPLE_CAP = 64;
 
 /** A named export resolution for the still-export dialog. */
 export interface ResolutionPreset {

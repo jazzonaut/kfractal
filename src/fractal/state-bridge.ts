@@ -5,6 +5,7 @@ import {
   CONTROL_SENSITIVITY_KEY,
   CONTROL_SENSITIVITY_MAX,
   CONTROL_SENSITIVITY_MIN,
+  LIVE_RENDER_KEY,
   SAMPLE_CAP,
 } from "../config/constants";
 import { EnvironmentManager } from "../render/environment";
@@ -48,13 +49,19 @@ function loadControlSensitivity(): number {
   return Math.min(CONTROL_SENSITIVITY_MAX, Math.max(CONTROL_SENSITIVITY_MIN, raw));
 }
 
-/** Read the persisted auto-quality choice; falls back to the per-device default (on for touch). */
+/** Read the persisted auto-quality choice; falls back to the default (on) when nothing is stored. */
 function loadAutoQuality(): boolean {
   if (typeof localStorage === "undefined") return autoQualityDefault();
   const raw = localStorage.getItem(AUTO_QUALITY_KEY);
   if (raw === "true") return true;
   if (raw === "false") return false;
   return autoQualityDefault();
+}
+
+/** Read the persisted live-render choice; off by default (it's an opt-in heavier preview). */
+function loadLiveRender(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem(LIVE_RENDER_KEY) === "true";
 }
 
 /** Deep copy so the live (mutable) state never aliases a stored look's tuples. */
@@ -165,6 +172,7 @@ export function createWorkstationState(
     diveEnabled: true,
     controlSensitivity: loadControlSensitivity(),
     autoQuality: loadAutoQuality(),
+    liveRender: loadLiveRender(),
     previewScale: 1,
     formulaName: "",
     formulaId: shape.formula,
