@@ -168,6 +168,7 @@ export function createWorkstationState(
     sampleCount: 0,
     rendering: false,
     preparingRender: false,
+    preparingLiveRender: false,
     denoise: true,
     diveEnabled: true,
     controlSensitivity: loadControlSensitivity(),

@@ -103,6 +103,11 @@ export class RenderEngine {
   // independent of the explicit render's `sampleIndexValue`; it resets to 0 on every scene change.
   private liveRender = false;
   private liveRenderSample = 0;
+  // True while the live render's full path-trace pipeline is compiling off the synchronous path
+  // (see ensureLiveRenderPipeline). Guards against launching a second overlapping compile, and the
+  // render loop keeps showing the analytic preview until it clears so the frame never freezes on a
+  // cold compile. Surfaced to the status bar via state.preparingLiveRender.
+  private liveRenderWarming = false;
   // True for the frames in which the view is being actively manipulated (camera gesture or dive
   // step), as opposed to a settings edit. In live-render mode it routes the cheap analytic
   // preview to camera motion only: a settings change skips the analytic frame and refines the
@@ -247,6 +252,27 @@ export class RenderEngine {
     this.liveRender = enabled;
     this.liveRenderSample = 0;
     if (!this.state.rendering) this.sceneDirty = true;
+  }
+
+  // Warm the active source's full path-trace pipeline off the synchronous render path so the live
+  // render's first feature/path-trace frame is a cache hit instead of a frame-freezing cold
+  // compile (the same guard startRender uses). Non-blocking: the live preview keeps running and
+  // the loop holds the analytic preview until this resolves. Idempotent via liveRenderWarming;
+  // re-fires per source because renderPipelineReady goes false again after a formula/chain change.
+  private ensureLiveRenderPipeline(): void {
+    if (this.liveRenderWarming) return;
+    this.liveRenderWarming = true;
+    this.state.preparingLiveRender = true;
+    void this.fractal
+      .ensureRenderPipeline(this.renderer, this.sampleRT)
+      .catch((error) => console.error("Live render pipeline compile failed", error))
+      .finally(() => {
+        this.liveRenderWarming = false;
+        this.state.preparingLiveRender = false;
+        // Pipeline ready (or failed): nudge a frame so the live render starts, or re-checks the
+        // source if it changed mid-compile (renderPipelineReady will re-trigger this if so).
+        this.sceneDirty = true;
+      });
   }
 
   // Any change drops back to the live preview and discards the render in progress.
@@ -642,15 +668,23 @@ export class RenderEngine {
     this.lastPreviewMarch = false;
     try {
       if (!this.state.rendering) {
+        // Live render needs the full path-trace pipeline. If it isn't compiled yet for the current
+        // source (warm-up hasn't reached it, a shape switch, or a chain that can't be pre-warmed),
+        // warm it OFF the synchronous path - otherwise the first feature/path-trace renderTo below
+        // would cold-compile and freeze the whole frame. While it compiles we keep showing the
+        // analytic preview, so the app stays live (and the status bar shows "Compiling render…").
+        const liveBlocked = this.liveRender && !this.fractal.renderPipelineReady();
+        if (liveBlocked) this.ensureLiveRenderPipeline();
         // Analytic preview: one sharp analytic sample, shown directly (blend factor 1). Skipped
         // while nothing changed - the canvas holds the last frame, so an idle workstation costs
         // zero GPU. It runs for: plain preview (always, on any change); live-render mode ONLY
-        // while the view is being actively manipulated (a camera gesture / dive step); and the
-        // very first frame (a fast preview retires the boot loader before the heavier path-trace
-        // pipeline compiles). A live-render SETTINGS edit deliberately does NOT run it - it falls
-        // through to the live block, which refines the path-trace in place so the image never
-        // flashes the differently-shaded preview look between the old and new render.
-        const wantAnalytic = !this.liveRender || this.viewChanging || !this.firstFramePresented;
+        // while the view is being actively manipulated (a camera gesture / dive step) or while the
+        // render pipeline is still warming; and the very first frame (a fast preview retires the
+        // boot loader before the heavier path-trace pipeline compiles). A live-render SETTINGS edit
+        // deliberately does NOT run it - it falls through to the live block, which refines the
+        // path-trace in place so the image never flashes the differently-shaded preview look.
+        const wantAnalytic =
+          !this.liveRender || this.viewChanging || !this.firstFramePresented || liveBlocked;
         if (this.sceneDirty && wantAnalytic) {
           // Track the live camera while interacting.
           this.fractal.syncCamera(this.stage.camera);
@@ -679,7 +713,11 @@ export class RenderEngine {
         // skipped above). Mirrors the explicit render loop below but on its own counter and
         // without flipping state.rendering (the explicit Render/Export stay native + full-cap).
         const liveCap = Math.min(this.state.sampleCap, LIVE_RENDER_SAMPLE_CAP);
-        if (this.liveRender && (this.sceneDirty || this.liveRenderSample < liveCap)) {
+        if (
+          this.liveRender &&
+          !liveBlocked &&
+          (this.sceneDirty || this.liveRenderSample < liveCap)
+        ) {
           // A run starts fresh when the scene was just dirtied (a settings edit, analytic skipped)
           // or the counter sits at 0 (the analytic preview just settled). Capture the denoiser
           // feature buffers once, then choose how the accumulation begins:

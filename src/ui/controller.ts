@@ -168,6 +168,11 @@ export interface WorkstationState {
   /** True between pressing Render and accumulation starting, while the full path-trace pipeline
    * compiles off the blocking path; the live preview keeps running. */
   preparingRender: boolean;
+  /** True while the live render's path-trace pipeline is compiling off the blocking path (on
+   * enabling it, or after a shape/chain change that needs a fresh pipeline). The analytic preview
+   * keeps showing meanwhile; surfaced as a small status-bar note so the wait isn't mistaken for a
+   * freeze. */
+  preparingLiveRender: boolean;
   /** Edge-aware à-trous filter on the accumulating render (fades out as it converges). */
   denoise: boolean;
   /** Deep-zoom dive (default on): scrolling in performs the infinite zoom into surface

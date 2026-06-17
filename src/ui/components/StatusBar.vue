@@ -72,6 +72,19 @@ function onExport(): void {
     <span class="text-muted-color" data-testid="samples-readout">
       {{ state.sampleCount }}/{{ state.sampleCap }}
     </span>
+    <!-- Live render is warming its path-trace pipeline off the blocking path; the analytic preview
+         keeps showing meanwhile, so flag the brief wait rather than letting it read as a freeze. -->
+    <span
+      v-if="state.preparingLiveRender"
+      v-tooltip.top="
+        'Compiling the render shaders for the live view. The preview stays live until it is ready.'
+      "
+      class="flex items-center gap-1.5 text-sky-300"
+      data-testid="live-render-warming"
+    >
+      <i class="pi pi-spin pi-spinner text-[0.7rem]" />
+      Compiling render…
+    </span>
     <ProgressBar
       v-if="state.rendering && !isCompact"
       :value="progress"

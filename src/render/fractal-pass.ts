@@ -191,6 +191,11 @@ export class FractalPass {
   // the same lazy model the atomic formulas use on first switch.
   private readonly chainPreviewMaterials = new Map<string, THREE.MeshBasicNodeMaterial>();
   private readonly chainRenderMaterials = new Map<string, THREE.MeshBasicNodeMaterial>();
+  // Materials whose GPU pipeline has been built (via compilePipeline) against the sample target.
+  // `renderTo` is a cache hit for these; for any other material it would cold-compile and freeze
+  // the frame. Drives renderPipelineReady so the live render can gate its first path-trace frame
+  // on an off-sync warm instead of stalling. A WeakSet so an evicted chain material can be GC'd.
+  private readonly compiledMaterials = new WeakSet<THREE.Material>();
   private activeFormula: FractalFormulaId;
   /** Compiled DE of the active chain, or null when an atomic formula is active. */
   private activeChainDE: string | null = null;
@@ -884,8 +889,13 @@ export class FractalPass {
     target: THREE.RenderTarget,
     onProgress: (done: number, total: number) => void,
   ): Promise<void> {
-    // Every formula's preview pipeline, then the active formula's full pipeline last (heaviest;
-    // the formula already on screen resolves its preview from cache immediately).
+    // Every formula's preview pipeline first (cheap; a shape switch in the live preview is then a
+    // cache hit), then every formula's full render pipeline - the active one ahead of the rest,
+    // since that's what an explicit Render or the live render hits immediately. Warming ALL render
+    // pipelines (not just the active one) means switching preset + rendering / enabling live render
+    // is a cache hit on any formula, not a cold compile. Chains can't be pre-warmed (their pipeline
+    // is keyed by a per-edit DE string), so they warm on demand off the sync path instead.
+    const otherFormulas = FORMULAS.filter((def) => def.id !== this.activeFormula);
     const jobs: { label: string; build: () => THREE.MeshBasicNodeMaterial }[] = [
       ...FORMULAS.map((def) => ({
         label: `${def.id}:preview`,
@@ -895,6 +905,10 @@ export class FractalPass {
         label: `${this.activeFormula}:render`,
         build: (): THREE.MeshBasicNodeMaterial => this.renderMaterialFor(this.activeFormula),
       },
+      ...otherFormulas.map((def) => ({
+        label: `${def.id}:render`,
+        build: (): THREE.MeshBasicNodeMaterial => this.renderMaterialFor(def.id),
+      })),
     ];
     const total = jobs.length;
     let done = 0;
@@ -943,6 +957,8 @@ export class FractalPass {
       const compiled = renderer.compileAsync(scene, this.camera);
       try {
         await compiled;
+        // The pipeline is now built against `target`'s format; renderTo will hit it from cache.
+        this.compiledMaterials.add(material);
       } finally {
         mesh.geometry.dispose();
         scene.clear();
@@ -963,6 +979,21 @@ export class FractalPass {
    * chain (which can't be precompiled, so syncMeshMaterial would otherwise cold-compile the
    * chain render material on sample 0) this is the first and only place it gets warmed.
    */
+  /**
+   * Whether the active source's full path-trace/feature pipeline is already compiled against the
+   * sample target (so renderTo is a cache hit, not a frame-freezing cold compile). The live render
+   * polls this to decide whether to start path-tracing or to warm off the sync path first. Building
+   * the material here is cheap (a cached node graph); only the GPU pipeline build is the costly bit
+   * that compiledMaterials tracks.
+   */
+  renderPipelineReady(): boolean {
+    const material =
+      this.activeChainDE !== null
+        ? this.chainMaterialFor(this.activeChainDE, false)
+        : this.renderMaterialFor(this.activeFormula);
+    return this.compiledMaterials.has(material);
+  }
+
   async ensureRenderPipeline(
     renderer: THREE.WebGPURenderer,
     target: THREE.RenderTarget,
