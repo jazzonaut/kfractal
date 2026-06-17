@@ -250,10 +250,17 @@ function onCancel(): void {
           size="small"
           data-testid="export-ssaa-select"
         />
-        <span v-if="internalDims.ss > 1 || internalDims.ss < supersample" class="text-muted-color/70">
-          <template v-if="internalDims.ss > 1">Renders at {{ internalDims.width }}×{{ internalDims.height }}</template>
+        <span
+          v-if="internalDims.ss > 1 || internalDims.ss < supersample"
+          class="text-muted-color/70"
+        >
+          <template v-if="internalDims.ss > 1"
+            >Renders at {{ internalDims.width }}×{{ internalDims.height }}</template
+          >
           <template v-if="internalDims.ss < supersample">
-            <template v-if="internalDims.ss > 1">(reduced to {{ internalDims.ss }}× by GPU limit)</template>
+            <template v-if="internalDims.ss > 1"
+              >(reduced to {{ internalDims.ss }}× by GPU limit)</template
+            >
             <template v-else>SSAA off at this resolution — exceeds the GPU texture limit</template>
           </template>
         </span>
