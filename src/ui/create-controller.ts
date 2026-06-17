@@ -10,7 +10,12 @@ import {
 import { LOOKS, defaultNewLight } from "../fractal/looks";
 import { PRESETS } from "../fractal/presets";
 import { getFormula } from "../fractal/registry";
-import { mutateFormulaSettings, rollChain, rollShape } from "../fractal/shape-generator";
+import {
+  mutateFormulaSettings,
+  rollChain,
+  rollChainShape,
+  rollShape,
+} from "../fractal/shape-generator";
 import { SHAPES } from "../fractal/shapes";
 import { chainStageStateFor, nextPaletteStopId } from "../fractal/state-bridge";
 import type { StateBridge } from "../fractal/state-bridge";
@@ -269,6 +274,7 @@ export function createController(deps: {
       // no per-frame DE-string regen) - the structural edits below use syncChain.
       bridge.syncChainValues();
     },
+    fitChain: () => bridge.fitChain(),
     setChainAddC: (value: boolean) => {
       state.chainAddC = value;
       bridge.syncChain();
@@ -715,11 +721,16 @@ export function createController(deps: {
       return persistLibrary();
     },
     generateShape: (options) => {
-      const next = rollShape({
-        formula: options.formula,
-        current: bridge.snapshotShape("", "", ""),
-        locks: { params: new Set(options.lockedParams), iterations: options.lockIterations },
-      });
+      // A hybrid chain is rolled whole (random transforms/params on a generic baseline frame);
+      // the atomic-formula locks don't apply to it.
+      const next =
+        options.formula === "chain"
+          ? rollChainShape()
+          : rollShape({
+              formula: options.formula,
+              current: bridge.snapshotShape("", "", ""),
+              locks: { params: new Set(options.lockedParams), iterations: options.lockIterations },
+            });
       bridge.applyShape(next);
       // Generated state is unsaved ("Custom"): a held selection would let Update
       // silently overwrite the stored item with the rolled values.

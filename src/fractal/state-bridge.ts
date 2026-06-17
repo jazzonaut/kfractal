@@ -14,7 +14,12 @@ import { ENVIRONMENTS } from "./environments";
 import { LOOKS } from "./looks";
 import { PRESETS } from "./presets";
 import { getFormula } from "./registry";
-import { BULB_FALLBACK_BAILOUT, CHAIN_MAX_ITERATIONS, chainNeedsBailout } from "./chain";
+import {
+  BULB_FALLBACK_BAILOUT,
+  CHAIN_MAX_ITERATIONS,
+  chainNeedsBailout,
+  frameChain,
+} from "./chain";
 import { getTransform } from "./transforms";
 import { SHAPES } from "./shapes";
 import { loadUserLibrary } from "./user-library";
@@ -23,6 +28,7 @@ import { defaultWarp, isWarpOff } from "./warp";
 import { glassParams } from "./types";
 import type { TransformId } from "./transforms";
 import type {
+  CameraPreset,
   EffectsSettings,
   FormulaChain,
   FractalPreset,
@@ -302,6 +308,8 @@ export interface StateBridge {
   readonly syncChain: () => void;
   /** Value-edit variant of syncChain: pushes stage param values only (no recompile/material swap). */
   readonly syncChainValues: () => void;
+  /** Re-fit the orbit camera + focus to the live chain's extent (editor "Fit to view"). */
+  readonly fitChain: () => void;
 }
 
 export function createStateBridge(deps: {
@@ -421,6 +429,21 @@ export function createStateBridge(deps: {
     dive.chain = chain;
     resetAccumulation();
   };
+  // Point the orbit camera + focus at an auto-framed pose. Mirrors the camera half of
+  // applyShape, but driven by frameChain (origin target, distance fit to the chain's extent)
+  // rather than a stored preset.
+  const applyChainFraming = (camera: CameraPreset): void => {
+    stage.applyPreset(camera);
+    state.cameraFov = camera.fov;
+    state.focusDistance = camera.distance;
+    fractal.uniforms.lens.value.y = camera.distance;
+  };
+  // Re-fit the camera to the live chain (the editor's "Fit to view"): geometry-changing edits
+  // don't auto-move the camera - matching atomic param edits - so this is the manual re-frame.
+  const fitChain = (): void => {
+    applyChainFraming(frameChain(chainFromState(state)));
+    resetAccumulation();
+  };
   const enterChain = (chain: FormulaChain): void => {
     // The live chain lives in state.chain* (authoritative for the editor + snapshotShape) and on
     // dive.chain / fractal.activeChainDE (the render+steer path). It is deliberately NOT written
@@ -438,6 +461,9 @@ export function createStateBridge(deps: {
     // dive.restore): the prior formula's accumulated offset/scale/basis is meaningless for the
     // chain, so marching it in that stale, re-anchored frame would bury the camera.
     dive.reset();
+    // Re-fit the camera to the new chain: the previous formula's framing won't fit it, leaving
+    // the geometry off-screen / off-centre otherwise.
+    applyChainFraming(frameChain(chain));
     syncChain();
   };
   const exitChain = (): void => {
@@ -778,5 +804,6 @@ export function createStateBridge(deps: {
     exitChain,
     syncChain,
     syncChainValues,
+    fitChain,
   };
 }

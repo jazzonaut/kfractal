@@ -192,6 +192,19 @@ function addStage(): void {
       />
     </div>
 
+    <!-- Editing stages doesn't auto-move the camera (matching atomic param edits); re-fit on
+         demand when the geometry has grown/shrunk out of frame. -->
+    <Button
+      label="Fit to view"
+      icon="pi pi-expand"
+      size="small"
+      severity="secondary"
+      outlined
+      class="w-full"
+      data-testid="chain-fit"
+      @click="controller.fitChain()"
+    />
+
     <Button
       label="Remove chain"
       icon="pi pi-times"

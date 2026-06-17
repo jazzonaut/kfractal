@@ -17,9 +17,12 @@ const controller = useController();
 const state = controller.state;
 const toast = useToast();
 
-const formulaChoice = ref<FractalFormulaId | "any">("any");
-const FORMULA_OPTIONS: { label: string; value: FractalFormulaId | "any" }[] = [
+const formulaChoice = ref<FractalFormulaId | "any" | "chain">("any");
+const FORMULA_OPTIONS: { label: string; value: FractalFormulaId | "any" | "chain" }[] = [
   { label: "Any formula", value: "any" },
+  // Hybrid formula chain (hybrid-formula-chains design): rolls a random stack of transforms
+  // rather than an atomic formula. Locks/param sliders below don't apply to a chain roll.
+  { label: "Hybrid chain", value: "chain" },
   ...FORMULAS.map((formula) => ({ label: formula.name, value: formula.id })),
 ];
 

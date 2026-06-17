@@ -1,3 +1,5 @@
+import { BOX_BULB, KLEIN_FOAM, MENGER_SPIRE } from "./chain-presets";
+import { frameChain } from "./chain";
 import type { FractalShape } from "./types";
 
 /**
@@ -274,6 +276,46 @@ export const CORAL_BLOOM: FractalShape = {
   trap: { scale: 0.5, power: 0.5 },
 };
 
+/**
+ * Curated hybrid formula chains (hybrid-formula-chains design). They reuse the march quality and
+ * trap mapping of the curated atomic shape whose DE family they most resemble, but the camera +
+ * focus are auto-framed from the chain's own extent (frameChain) rather than inherited, since
+ * chain geometry doesn't share the baseline formula's scale or centre. The `formula` /
+ * `formulaSettings` they inherit are the best-effort fallback for builds without chain support.
+ */
+const boxBulbCamera = frameChain(BOX_BULB);
+export const HYBRID_BOX_BULB: FractalShape = {
+  ...REEF_SPIRES,
+  id: "hybrid-box-bulb",
+  name: "Hybrid Box-Bulb",
+  description: "Box-fold grid, sphere-fold inflation, and a bulb lobe spun per iteration.",
+  chain: BOX_BULB,
+  camera: boxBulbCamera,
+  focusDistance: boxBulbCamera.distance,
+};
+
+const mengerSpireCamera = frameChain(MENGER_SPIRE);
+export const HYBRID_MENGER_SPIRE: FractalShape = {
+  ...LATTICE_BASTION,
+  id: "hybrid-menger-spire",
+  name: "Hybrid Menger Spire",
+  description: "A spun Menger lattice run as a pure IFS attractor.",
+  chain: MENGER_SPIRE,
+  camera: mengerSpireCamera,
+  focusDistance: mengerSpireCamera.distance,
+};
+
+const kleinFoamCamera = frameChain(KLEIN_FOAM);
+export const HYBRID_KLEIN_FOAM: FractalShape = {
+  ...BUBBLE_FOAM,
+  id: "hybrid-klein-foam",
+  name: "Hybrid Klein Foam",
+  description: "Period-2 lattice fold into a sphere inversion - Apollonian-flavoured foam.",
+  chain: KLEIN_FOAM,
+  camera: kleinFoamCamera,
+  focusDistance: kleinFoamCamera.distance,
+};
+
 export const SHAPES: readonly FractalShape[] = [
   REEF_SPIRES,
   CARVED_PAGODA,
@@ -296,4 +338,7 @@ export const SHAPES: readonly FractalShape[] = [
   SPONGE_BALL,
   FOAM_ORB,
   CORAL_BLOOM,
+  HYBRID_BOX_BULB,
+  HYBRID_MENGER_SPIRE,
+  HYBRID_KLEIN_FOAM,
 ];

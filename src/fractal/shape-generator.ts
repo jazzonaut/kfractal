@@ -1,4 +1,4 @@
-import { clampChain } from "./chain";
+import { clampChain, frameFromExtent, probeChainExtent } from "./chain";
 import { FORMULAS, getFormula } from "./registry";
 import { getTransform, TRANSFORM_LIST } from "./transforms";
 import {
@@ -116,16 +116,22 @@ export function rollShape(args: {
   };
 }
 
-// Structure-forming transforms: a chain of only rotations is a rigid no-op, so a rolled
-// chain always contains at least one of these (the silhouette-setters).
-const STRUCTURE_TRANSFORMS: readonly TransformId[] = ["boxFold", "scaleAddC", "bulbPow"];
+// Smallest scale magnitude that drives divergence: below this the scale+addC iterate contracts
+// to a fixed point (dr stops growing) and no surface forms. Matches the rendered-shape evidence.
+const MIN_DRIVER_SCALE = 1.3;
 
 /**
  * Roll a random hybrid formula chain (hybrid-formula-chains design, Phase 2): 2-4 stages of
- * random transforms with params drawn from each transform's schema, guaranteed to include a
- * structure-forming operator. addC is always on (escape-time reinjection); a chain with a
- * bulb lobe gets a finite bailout (and may use the sharper log DE), pure fold/IFS chains run
- * unbounded under the linear DE. The result is clamped to registry-safe ranges.
+ * random transforms with params drawn from each transform's schema. addC is always on (escape-time
+ * reinjection); a chain with a bulb lobe gets a finite bailout (and may use the sharper log DE),
+ * pure fold/IFS chains run unbounded under the linear DE. The result is clamped to registry-safe
+ * ranges.
+ *
+ * The first stage is always a derivative-growing DRIVER - a bulb power, or a scale with magnitude
+ * past MIN_DRIVER_SCALE. This is the renderability hinge: the chain DE is length(p)/dr, so without
+ * something to grow dr (folds, rotations and lattice reflections are isometries that leave dr~=1)
+ * the DE stays a bounded constant that never resolves to a surface and nothing renders. Forcing a
+ * driver roughly halves the dead-roll rate; rollChainShape re-rolls away the remainder.
  */
 export function rollChain(rng: Rng = Math.random): FormulaChain {
   const ids = TRANSFORM_LIST.map((t) => t.id);
@@ -139,10 +145,18 @@ export function rollChain(rng: Rng = Math.random): FormulaChain {
       ]),
     ),
   });
-  // First stage is always structure-forming so the chain is never a pure rigid motion.
-  const stages = [
-    rollStage(STRUCTURE_TRANSFORMS[Math.floor(rng() * STRUCTURE_TRANSFORMS.length)]!),
-  ];
+  // Driver: a bulb power, or a scale forced past the divergence threshold (random sign), clamped
+  // to the scaleAddC schema range.
+  const rollDriver = () => {
+    if (rng() < 0.5) return rollStage("bulbPow");
+    const def = getTransform("scaleAddC").params[0]!;
+    const signed = (rng() < 0.5 ? 1 : -1) * (MIN_DRIVER_SCALE + rng() * (3 - MIN_DRIVER_SCALE));
+    return {
+      transform: "scaleAddC" as TransformId,
+      values: { scale: clamp(snapToStep(signed, def.min, def.step), def.min, def.max) },
+    };
+  };
+  const stages = [rollDriver()];
   // Cap bulb stages at one: two+ bulbPow stages compound within a single iteration
   // ((p^8)^8...) and overflow to Inf/NaN before the next iteration's bailout check fires - a
   // garbage DE (~0.5% of unconstrained rolls). One bulb, bounded by the bailout, is well-behaved.
@@ -178,15 +192,61 @@ export function seedChainTrap(chain: FormulaChain): { scale: number; power: numb
  * baseline, with a seeded trap. The atomic `formula` is left as the baseline's (the
  * best-effort fallback for builds without chain support).
  */
+// Acceptance for a generated chain, scored on the render-march visibility of its frame (not just
+// the conservative geometry probe): the probe can resolve a surface the renderer's coarser step
+// tunnels through, so a roll only counts as "good" once it actually fills a sensible slice of the
+// framed view and isn't sitting on/inside the surface.
+const MIN_COVERAGE = 0.08; // below this the shape is a speck / empty on screen
+const MIN_CENTER_FRAC = 0.04; // below this the camera is on/inside the surface (dark)
+const MAX_ROLL_TRIES = 8;
+
+/** Visibility score of a probed extent: 0 if it doesn't render, else its on-screen coverage. */
+function renderScore(ext: ReturnType<typeof probeChainExtent>): number {
+  if (!ext || ext.hitFrac < 0.1) return 0;
+  if (ext.coverage < MIN_COVERAGE || ext.centerFrac < MIN_CENTER_FRAC) return 0;
+  return ext.coverage;
+}
+
 export function rollChainShape(rng: Rng = Math.random): FractalShape {
-  const chain = rollChain(rng);
+  // Re-roll past chains that frame poorly: even with a forced driver, a fraction of rolls produce a
+  // DE the renderer shows as a speck, empty, or only from inside (dark). Probe each roll, predict
+  // its on-screen visibility, and keep the first that renders well - or the best seen after a few
+  // tries so generation always returns something.
+  let chain = rollChain(rng);
+  let ext = probeChainExtent(chain);
+  let bestScore = renderScore(ext);
+  let best = chain;
+  let bestExt = ext;
+  for (let tries = 1; tries < MAX_ROLL_TRIES && bestScore <= 0; tries += 1) {
+    chain = rollChain(rng);
+    ext = probeChainExtent(chain);
+    const score = renderScore(ext);
+    if (score > bestScore) {
+      bestScore = score;
+      best = chain;
+      bestExt = ext;
+    }
+  }
+  // Auto-frame from the chain's own surface: the mandelbox baseline's camera doesn't fit an
+  // arbitrary rolled chain (different scale/centre), so frame to fit instead of inheriting it.
+  const camera = bestExt
+    ? frameFromExtent(bestExt)
+    : {
+        target: [0, 0, 0] as [number, number, number],
+        yaw: -0.72,
+        pitch: -0.2,
+        distance: 6,
+        fov: 45,
+      };
   return {
     ...structuredClone(GENERATOR_BASELINES.mandelbox),
     id: "",
     name: "Generated Hybrid",
     description: "",
-    chain,
-    trap: seedChainTrap(chain),
+    chain: best,
+    trap: seedChainTrap(best),
+    camera,
+    focusDistance: camera.distance,
   };
 }
 

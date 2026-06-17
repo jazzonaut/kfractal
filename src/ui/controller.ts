@@ -341,6 +341,8 @@ export interface Controller {
   setChainStageTransform: (index: number, transform: TransformId) => void;
   /** Edit a stage param value (uniform-only; no recompile). */
   setChainStageParam: (index: number, key: string, value: number) => void;
+  /** Re-fit the camera to the live chain's extent (centres + frames it). */
+  fitChain: () => void;
   setChainAddC: (value: boolean) => void;
   /** Escape radius; <= 0 disables the bailout (structural). */
   setChainBailout: (value: number) => void;
@@ -433,9 +435,11 @@ export interface Controller {
   /** Copy a stored user or curated item into the user library (not applied, not selected). */
   duplicateUserItem: (kind: LibraryKind, id: string) => LibraryActionResult;
   deleteUserItem: (kind: LibraryKind, id: string) => LibraryActionResult;
-  /** Roll a random unsaved shape (registry ranges) and apply it. Clears shape/preset selection. */
+  /** Roll a random unsaved shape (registry ranges) and apply it. Clears shape/preset selection.
+   * `formula: "chain"` rolls a random hybrid formula chain instead of an atomic formula (locks
+   * do not apply to chains). */
   generateShape: (options: {
-    readonly formula: FractalFormulaId | "any";
+    readonly formula: FractalFormulaId | "any" | "chain";
     readonly lockedParams: readonly string[];
     readonly lockIterations: boolean;
   }) => void;

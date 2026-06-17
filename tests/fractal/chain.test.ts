@@ -5,6 +5,8 @@ import {
   chainStepScale,
   clampChain,
   compileChainDE,
+  frameChain,
+  probeChainExtent,
 } from "../../src/fractal/chain";
 import {
   BOX_BULB,
@@ -213,6 +215,75 @@ describe("transform CPU mirrors", () => {
         }
       }
     }
+  });
+});
+
+describe("probeChainExtent / frameChain (ray-cast auto-framing)", () => {
+  // The probe shell + reach are private to chain.ts; a frame can sit at most a shell-radius'
+  // worth of surface (FRAME_R = 24) out, well under this generous bound. Guards "off to infinity".
+  const maxDistance = (24 / Math.sin((45 * Math.PI) / 180 / 2)) * 1.3 + 1e-6;
+
+  it("resolves a surface for the curated chains and frames it finite, centred, and on-screen", () => {
+    for (const chain of [
+      MANDELBOX_AS_CHAIN,
+      MANDELBULB_AS_CHAIN,
+      BOX_BULB,
+      MENGER_SPIRE,
+      SIN_BULB,
+    ]) {
+      const ext = probeChainExtent(chain);
+      expect(ext).not.toBeNull();
+      expect(ext!.hitFrac).toBeGreaterThan(0.15);
+      // The render-march visibility check predicts the framed shape actually fills the view (not a
+      // speck/empty) and that the camera isn't sitting on the surface (centerFrac near 0 = dark).
+      expect(ext!.coverage).toBeGreaterThan(0.08);
+      expect(ext!.centerFrac).toBeGreaterThan(0.04);
+      const cam = frameChain(chain);
+      for (const c of cam.target) expect(Number.isFinite(c)).toBe(true);
+      expect(cam.distance).toBeGreaterThan(0);
+      expect(cam.distance).toBeLessThanOrEqual(maxDistance);
+      // Camera sits outside the surface bound (a full radius + breathing room), never inside it.
+      expect(cam.distance).toBeGreaterThan(ext!.radius);
+    }
+  });
+
+  it("centres a symmetric escape-time set near the origin", () => {
+    // Mandelbox/-bulb are origin-symmetric, so the surface centroid lands ~origin.
+    for (const chain of [MANDELBOX_AS_CHAIN, MANDELBULB_AS_CHAIN]) {
+      const t = frameChain(chain).target;
+      expect(Math.hypot(t[0], t[1], t[2])).toBeLessThan(1);
+    }
+  });
+
+  it("flags a space-filling chain as unbounded and clamps it to a near view", () => {
+    // KLEIN_FOAM's period-2 lattice tiles space: the surface reaches the probe shell, so it has
+    // no finite bound and must be framed close rather than zoomed out to a dot.
+    const ext = probeChainExtent(KLEIN_FOAM);
+    expect(ext).not.toBeNull();
+    expect(ext!.unbounded).toBe(true);
+    expect(ext!.radius).toBeLessThanOrEqual(3.5);
+  });
+
+  it("reports null for a degenerate chain with no resolvable surface", () => {
+    // A pure contraction (scale << 1, no addC) collapses to a point: no ray ever resolves a hit.
+    const ext = probeChainExtent({
+      stages: [{ transform: "scaleAddC", values: { scale: 0.01 } }],
+      iterations: 2,
+      addC: false,
+      bailout: Infinity,
+      deForm: "linear",
+    });
+    expect(ext).toBeNull();
+    // frameChain still hands back a usable finite default frame rather than a zoom-to-point.
+    const cam = frameChain({
+      stages: [{ transform: "scaleAddC", values: { scale: 0.01 } }],
+      iterations: 2,
+      addC: false,
+      bailout: Infinity,
+      deForm: "linear",
+    });
+    expect(Number.isFinite(cam.distance)).toBe(true);
+    expect(cam.distance).toBeGreaterThan(0);
   });
 });
 
