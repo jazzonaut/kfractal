@@ -1,4 +1,10 @@
-import { AUTO_QUALITY_KEY, CONTROL_SENSITIVITY_KEY, LIVE_RENDER_KEY } from "../config/constants";
+import {
+  AUTO_QUALITY_KEY,
+  CONTROL_SENSITIVITY_KEY,
+  LIVE_RENDER_KEY,
+  LIVE_RENDER_SCALE_CAP_KEY,
+  snapLiveRenderScaleCap,
+} from "../config/constants";
 import { downloadTextFile } from "../core/download";
 import {
   buildLibraryFile,
@@ -203,6 +209,17 @@ export function createController(deps: {
         localStorage.setItem(LIVE_RENDER_KEY, String(value));
       } catch {
         // Private-mode / quota failures are non-fatal: the live setting still applies this
+        // session, it just won't survive a reload.
+      }
+    },
+    setLiveRenderScaleCap: (value: number) => {
+      const nearest = snapLiveRenderScaleCap(value);
+      state.liveRenderScaleCap = nearest;
+      engine.setLiveRenderScaleCap(nearest);
+      try {
+        localStorage.setItem(LIVE_RENDER_SCALE_CAP_KEY, String(nearest));
+      } catch {
+        // Private-mode / quota failures are non-fatal: the live value still applies this
         // session, it just won't survive a reload.
       }
     },

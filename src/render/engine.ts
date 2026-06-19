@@ -1,5 +1,9 @@
 import * as THREE from "three/webgpu";
-import { FPS_INTERVAL, LIVE_RENDER_SAMPLE_CAP } from "../config/constants";
+import {
+  FPS_INTERVAL,
+  LIVE_RENDER_SAMPLE_CAP,
+  LIVE_RENDER_SCALE_CAP_DEFAULT,
+} from "../config/constants";
 import { startLoop } from "../core/loop";
 import { warpStepBoost } from "../fractal/warp";
 import { CHAIN_PREVIEW_ITERS, chainStepScale } from "../fractal/chain";
@@ -30,7 +34,6 @@ const EXPORT_STALL_MS = 60000;
 // Once at least one sample has completed, treat "no progress for longer than this multiple of
 // the slowest sample seen" as a stall - adaptive headroom over real per-sample cost.
 const EXPORT_STALL_SAMPLE_FACTOR = 4;
-
 function makeSampleTarget(width: number, height: number): THREE.RenderTarget {
   return new THREE.RenderTarget(width, height, {
     type: THREE.FloatType,
@@ -103,6 +106,7 @@ export class RenderEngine {
   // independent of the explicit render's `sampleIndexValue`; it resets to 0 on every scene change.
   private liveRender = false;
   private liveRenderSample = 0;
+  private liveRenderScaleCap = LIVE_RENDER_SCALE_CAP_DEFAULT;
   // True while the live render's full path-trace pipeline is compiling off the synchronous path
   // (see ensureLiveRenderPipeline). Guards against launching a second overlapping compile, and the
   // render loop keeps showing the analytic preview until it clears so the frame never freezes on a
@@ -215,7 +219,11 @@ export class RenderEngine {
   // tier in the live preview. A cheap no-op when the resulting size is unchanged, so the
   // per-edit resetAccumulation path can call it on every frame without churning GPU memory.
   private syncRenderScale(): void {
-    const scale = this.exporting || this.state.rendering ? 1 : this.previewScale;
+    const previewScale = this.liveRender
+      ? Math.min(this.previewScale, this.liveRenderScaleCap)
+      : this.previewScale;
+    const scale = this.exporting || this.state.rendering ? 1 : previewScale;
+    this.state.previewScale = scale;
     const rw = Math.max(1, Math.round(this.width * scale));
     const rh = Math.max(1, Math.round(this.height * scale));
     if (rw === this.renderWidth && rh === this.renderHeight) return;
@@ -240,7 +248,8 @@ export class RenderEngine {
       this.previewScale = 1;
       this.previewQuality.reset();
     }
-    this.state.previewScale = this.previewScale;
+    // syncRenderScale is the single writer of state.previewScale (it applies the live-render cap
+    // and the render/export native override), so just let it publish the new value.
     this.syncRenderScale();
   }
 
@@ -251,7 +260,14 @@ export class RenderEngine {
   setLiveRender(enabled: boolean): void {
     this.liveRender = enabled;
     this.liveRenderSample = 0;
+    this.syncRenderScale();
     if (!this.state.rendering) this.sceneDirty = true;
+  }
+
+  setLiveRenderScaleCap(value: number): void {
+    this.liveRenderScaleCap = Math.min(1, Math.max(0.1, value));
+    this.syncRenderScale();
+    if (this.liveRender && !this.state.rendering) this.sceneDirty = true;
   }
 
   // Warm the active source's full path-trace pipeline off the synchronous render path so the live
@@ -632,7 +648,6 @@ export class RenderEngine {
     if (this.autoQualityEnabled && !this.state.rendering && this.lastPreviewMarch) {
       if (this.previewQuality.sample(dt)) {
         this.previewScale = this.previewQuality.scale;
-        this.state.previewScale = this.previewScale;
         this.syncRenderScale();
       }
     }
@@ -689,14 +704,18 @@ export class RenderEngine {
         if (liveBlocked) this.ensureLiveRenderPipeline();
         // Analytic preview: one sharp analytic sample, shown directly (blend factor 1). Skipped
         // while nothing changed - the canvas holds the last frame, so an idle workstation costs
-        // zero GPU. It runs for: plain preview (always, on any change); live-render mode ONLY
-        // while the view is being actively manipulated (a camera gesture / dive step) or while the
-        // render pipeline is still warming; and the very first frame (a fast preview retires the
-        // boot loader before the heavier path-trace pipeline compiles). A live-render SETTINGS edit
-        // deliberately does NOT run it - it falls through to the live block, which refines the
-        // path-trace in place so the image never flashes the differently-shaded preview look.
+        // zero GPU. It runs for: plain preview (always, on any change); live-render mode while a
+        // scene edit/view move is active; while the render pipeline is still warming; and the very
+        // first frame. Settings edits used to fall straight into the live path-trace branch, but
+        // at native preview resolution a slider drag could then run feature/path-trace work every
+        // frame and starve input. Show the cheap analytic frame during the edit, then let the live
+        // render refine after the dirty stream settles.
         const wantAnalytic =
-          !this.liveRender || this.viewChanging || !this.firstFramePresented || liveBlocked;
+          !this.liveRender ||
+          this.sceneDirty ||
+          this.viewChanging ||
+          !this.firstFramePresented ||
+          liveBlocked;
         if (this.sceneDirty && wantAnalytic) {
           // Track the live camera while interacting.
           this.fractal.syncCamera(this.stage.camera);
@@ -713,38 +732,26 @@ export class RenderEngine {
           // onto is discarded by the first path-trace sample's blend-factor-1 overwrite.
           this.liveRenderSample = 0;
           // Auto-quality should measure the heavy path-trace samples in live-render mode, not
-          // these cheap analytic frames (feeding both would pump the tier between drag and
+          // these cheap analytic frames (feeding both would pump the tier between edit/move and
           // settle). In plain preview the analytic frame IS the load signal, so it still feeds.
           this.lastPreviewMarch = !this.liveRender;
           this.markFirstFrame();
           return;
         }
         // Live render: accumulate the real path-traced lighting at the (auto-quality) preview
-        // scale up to a low cap, then idle. Entered both on a settled view (climb to the cap)
-        // and on a settings edit (sceneDirty true here means the analytic frame was deliberately
-        // skipped above). Mirrors the explicit render loop below but on its own counter and
-        // without flipping state.rendering (the explicit Render/Export stay native + full-cap).
+        // scale up to a low cap, then idle. Mirrors the explicit render loop below but on its own
+        // counter and without flipping state.rendering (the explicit Render/Export stay native +
+        // full-cap).
         const liveCap = Math.min(this.state.sampleCap, LIVE_RENDER_SAMPLE_CAP);
-        if (
-          this.liveRender &&
-          !liveBlocked &&
-          (this.sceneDirty || this.liveRenderSample < liveCap)
-        ) {
-          // A run starts fresh when the scene was just dirtied (a settings edit, analytic skipped)
-          // or the counter sits at 0 (the analytic preview just settled). Capture the denoiser
-          // feature buffers once, then choose how the accumulation begins:
-          if (this.sceneDirty || this.liveRenderSample === 0) {
-            // sceneDirty here ⇒ a settings edit (the analytic frame was skipped); !sceneDirty with
-            // a zeroed counter ⇒ the analytic preview just settled (only that path clears dirty
-            // and leaves the counter at 0). They want opposite starts:
-            //   - settled after orbit/zoom: KEEP the preview already sitting in the accumulation
-            //     buffer as sample 0 and start MC sampling at index 1, so the path-trace blends in
-            //     over the first samples (blend 1/2, 1/3, …) - a real cross-dissolve from the
-            //     preview into the render rather than a hard cut between two different looks.
-            //   - a settings edit: overwrite from sample 0, so a value reads crisply each frame
-            //     while a slider is dragged (seeding would smear consecutive edits into a trail).
-            const dissolveFromPreview = !this.sceneDirty;
-            this.sceneDirty = false;
+        if (this.liveRender && !liveBlocked && this.liveRenderSample < liveCap) {
+          // A run starts fresh when the counter sits at 0 - i.e. the analytic preview just settled.
+          // Any scene edit or view move routes through the analytic branch above (it owns every
+          // sceneDirty frame), which clears the flag and zeroes the counter, so sceneDirty is
+          // always false by the time we reach here. Capture the denoiser feature buffers once:
+          if (this.liveRenderSample === 0) {
+            // KEEP the preview already sitting in the accumulation buffer as sample 0 and start MC
+            // sampling at index 1, so the path-trace blends in over the first samples (blend 1/2,
+            // 1/3, …) - a cross-dissolve from the preview into the render rather than a hard cut.
             // Pin the camera and capture the denoiser's primary-hit feature buffers once per run.
             this.fractal.syncCamera(this.stage.camera);
             this.fractal.setMode(MODE_FEATURE_ND);
@@ -754,8 +761,8 @@ export class RenderEngine {
             // Fresh mean: drop any denoise cache from a previous run so it re-filters from the top.
             this.denoiseCacheSample = -1;
             // Index 1 keeps the buffered preview as the implicit sample 0 (it fades to ~1/liveCap
-            // by convergence - imperceptible); index 0 discards it (blend factor 1 overwrites).
-            this.liveRenderSample = dissolveFromPreview ? 1 : 0;
+            // by convergence - imperceptible).
+            this.liveRenderSample = 1;
           }
           this.fractal.setMode(MODE_PATHTRACE);
           this.fractal.setFrame(this.liveRenderSample);

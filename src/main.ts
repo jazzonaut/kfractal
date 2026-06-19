@@ -192,6 +192,7 @@ async function main(): Promise<void> {
   // doesn't jank on boot before the runtime loop adapts.
   engine.setAutoQuality(state.autoQuality);
   // Seed the live render (low-res progressive preview) from the persisted choice; off by default.
+  engine.setLiveRenderScaleCap(state.liveRenderScaleCap);
   engine.setLiveRender(state.liveRender);
   mountUi(controller);
 

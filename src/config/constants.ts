@@ -41,11 +41,37 @@ export const AUTO_QUALITY_KEY = "kf.preview.autoQuality";
  * Live render (low-res progressive preview): the persisted on/off preference. When on, the live
  * view shows the real path-traced lighting/colour instead of the cheap analytic preview — the
  * fast preview is kept while the camera is moving, then a downsampled progressive render
- * accumulates once the view settles. The downsampling is auto-quality's job (it runs at the
- * live preview render scale), so this resembles, but is lighter than, the full Render/Export
- * (which stay native). Defaults off when no choice is stored.
+ * accumulates once the view settles. The full Render/Export stay native. Defaults off when no
+ * choice is stored.
  */
 export const LIVE_RENDER_KEY = "kf.preview.liveRender";
+
+/**
+ * Live-render scale cap. This caps only the progressive path-traced live preview; explicit
+ * Render/Export stay native. Persisted separately from Auto quality so users can choose a
+ * sharpness/responsiveness tradeoff for the live render.
+ */
+export const LIVE_RENDER_SCALE_CAP_KEY = "kf.preview.liveRenderScaleCap";
+export const LIVE_RENDER_SCALE_CAP_DEFAULT = 0.33;
+export const LIVE_RENDER_SCALE_CAP_CHOICES = [0.33, 0.5, 0.75, 1] as const;
+
+/**
+ * Snap an arbitrary value to the nearest allowed live-render scale-cap tier. Non-finite input
+ * (e.g. an absent/garbage localStorage entry) falls through to the default, since no tier ever
+ * beats the initial `Infinity` distance.
+ */
+export function snapLiveRenderScaleCap(raw: number): number {
+  let best: number = LIVE_RENDER_SCALE_CAP_DEFAULT;
+  let bestDist = Infinity;
+  for (const choice of LIVE_RENDER_SCALE_CAP_CHOICES) {
+    const dist = Math.abs(choice - raw);
+    if (dist < bestDist) {
+      best = choice;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
 
 /**
  * Sample cap for the live render's progressive accumulation. Lower than the full Render cap:

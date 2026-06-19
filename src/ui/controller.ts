@@ -303,9 +303,12 @@ export interface WorkstationState {
   autoQuality: boolean;
   /** Live render: when on, the live view shows the real path-traced lighting/colour (a
    * downsampled progressive render that settles once the camera stops) instead of the cheap
-   * analytic preview. The downscaling is auto-quality's; the full Render/Export stay native. A
-   * UI preference; persisted to localStorage on change. */
+   * analytic preview. The full Render/Export stay native. A UI preference; persisted to
+   * localStorage on change. */
   liveRender: boolean;
+  /** Maximum internal scale used by the live path-traced preview. Explicit Render/Export stay
+   * native. A UI preference; persisted to localStorage on change. */
+  liveRenderScaleCap: number;
   /** Current live-preview render scale (1 = native). Driven by the engine while auto-quality
    * adapts; surfaced in the status bar as a quality badge. */
   previewScale: number;
@@ -327,6 +330,8 @@ export interface Controller {
   setAutoQuality: (value: boolean) => void;
   /** Toggle the live render (low-res progressive path-traced preview); persisted across reloads. */
   setLiveRender: (value: boolean) => void;
+  /** Set the live-render internal scale cap; persisted across reloads. */
+  setLiveRenderScaleCap: (value: number) => void;
   /** Reserve horizontal space for docked UI; the canvas resizes to the remaining width. */
   setViewportRightInset: (px: number) => void;
   /** Reserve vertical space for docked UI; the canvas resizes to the remaining height. */

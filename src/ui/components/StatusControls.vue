@@ -4,7 +4,7 @@ import { useFullscreen, useMediaQuery } from "@vueuse/core";
 import Button from "primevue/button";
 import Select from "primevue/select";
 import ToggleSwitch from "primevue/toggleswitch";
-import { SAMPLE_CAP_CHOICES } from "../../config/constants";
+import { LIVE_RENDER_SCALE_CAP_CHOICES, SAMPLE_CAP_CHOICES } from "../../config/constants";
 import { useController } from "../composables/use-controller";
 
 // The secondary status-bar controls, shared by two arrangements: laid out inline in the bar
@@ -19,6 +19,10 @@ const state = controller.state;
 // Stable array identity: a [...spread] in the template would hand Select a fresh options
 // prop on every re-render, forcing its subtree to re-render with it.
 const sampleCapOptions = [...SAMPLE_CAP_CHOICES];
+const liveRenderScaleOptions = LIVE_RENDER_SCALE_CAP_CHOICES.map((value) => ({
+  label: `${Math.round(value * 100)}%`,
+  value,
+}));
 
 // Whole-document fullscreen (no target = documentElement): hides the browser chrome so the
 // render fills the screen. `isSupported` is false where the Fullscreen API isn't available
@@ -82,7 +86,7 @@ const showFullscreen = computed(() => fullscreenSupported.value && isTouch.value
     </label>
     <label
       v-tooltip.top="
-        'Show the real path-traced lighting and colour in the live view (a downsampled render that settles once the camera stops) instead of the fast preview. Keep Auto quality on so it stays low-res. The full Render and Export are unaffected.'
+        'Show the real path-traced lighting and colour in the live view (a downsampled render that settles once the camera stops) instead of the fast preview. The full Render and Export are unaffected.'
       "
       :class="
         stacked
@@ -95,6 +99,29 @@ const showFullscreen = computed(() => fullscreenSupported.value && isTouch.value
         :model-value="state.liveRender"
         data-testid="live-render-toggle"
         @update:model-value="controller.setLiveRender($event)"
+      />
+    </label>
+    <label
+      v-if="state.liveRender"
+      v-tooltip.top="
+        'Maximum internal resolution for the live path-traced preview. Render and export stay full quality.'
+      "
+      :class="
+        stacked
+          ? 'flex items-center justify-between gap-2 text-muted-color'
+          : 'flex items-center gap-2 text-muted-color'
+      "
+    >
+      Live scale
+      <Select
+        :model-value="state.liveRenderScaleCap"
+        :options="liveRenderScaleOptions"
+        option-label="label"
+        option-value="value"
+        size="small"
+        class="w-26"
+        data-testid="live-render-scale-select"
+        @update:model-value="controller.setLiveRenderScaleCap($event)"
       />
     </label>
     <label

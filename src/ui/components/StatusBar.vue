@@ -56,11 +56,11 @@ function onExport(): void {
     data-testid="status-bar"
   >
     <span class="text-muted-color" data-testid="fps-readout">{{ state.fps }} fps</span>
-    <!-- Shown only when auto-quality is actively downscaling (scale < 1): a steady "100%" on a
-         capable device conveys nothing (the toggle already signals the feature is on), and the
-         badge is hidden while rendering, where the engine forces native regardless. -->
+    <!-- Shown only when the live preview is actively downscaling (scale < 1): a steady "100%"
+         conveys nothing, and the badge is hidden while rendering, where the engine forces native
+         regardless. -->
     <span
-      v-if="state.autoQuality && !state.rendering && state.previewScale < 1"
+      v-if="!state.rendering && state.previewScale < 1"
       v-tooltip.top="
         'Live preview running below native to keep the frame rate up. Render and export stay full quality.'
       "

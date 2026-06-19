@@ -6,7 +6,10 @@ import {
   CONTROL_SENSITIVITY_MAX,
   CONTROL_SENSITIVITY_MIN,
   LIVE_RENDER_KEY,
+  LIVE_RENDER_SCALE_CAP_DEFAULT,
+  LIVE_RENDER_SCALE_CAP_KEY,
   SAMPLE_CAP,
+  snapLiveRenderScaleCap,
 } from "../config/constants";
 import { EnvironmentManager } from "../render/environment";
 import type { RenderEngine } from "../render/engine";
@@ -62,6 +65,12 @@ function loadAutoQuality(): boolean {
 function loadLiveRender(): boolean {
   if (typeof localStorage === "undefined") return false;
   return localStorage.getItem(LIVE_RENDER_KEY) === "true";
+}
+
+/** Read the persisted live-render scale cap, snapped to an allowed tier. */
+function loadLiveRenderScaleCap(): number {
+  if (typeof localStorage === "undefined") return LIVE_RENDER_SCALE_CAP_DEFAULT;
+  return snapLiveRenderScaleCap(Number(localStorage.getItem(LIVE_RENDER_SCALE_CAP_KEY)));
 }
 
 /** Deep copy so the live (mutable) state never aliases a stored look's tuples. */
@@ -174,6 +183,7 @@ export function createWorkstationState(
     controlSensitivity: loadControlSensitivity(),
     autoQuality: loadAutoQuality(),
     liveRender: loadLiveRender(),
+    liveRenderScaleCap: loadLiveRenderScaleCap(),
     previewScale: 1,
     formulaName: "",
     formulaId: shape.formula,
